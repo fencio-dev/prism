@@ -25,7 +25,8 @@
 ### Problem
 
 IntentEvents and policies contain variable vocabulary:
-- Intent: "query the users table"  
+
+- Intent: "query the users table"
 - Policy: expects "read" for allowed action
 
 Without normalization, encoding similarity becomes fuzzy and unreliable. We cannot guarantee high-recall matching (policies must match intended intents).
@@ -38,13 +39,14 @@ Insert a **canonicalization layer** before encoding:
 IntentEvent (variable) → BERT Classifier → Canonical Terms → IntentEncoder (SemanticEncoder)
                                                                   ↓
                                                           128d intent vector
-                                                            
+                                                          
 Policy (variable) → BERT Classifier → Canonical Terms → PolicyEncoder (SemanticEncoder)
                                                               ↓
                                                       4×16×32 anchor vectors
 ```
 
 Both use an identical pipeline up to canonicalization, then diverge via specialized encoder subclasses (IntentEncoder and PolicyEncoder) that share a common **SemanticEncoder** base class. This ensures:
+
 - **Deterministic**: Same input always produces same output
 - **Controllable**: Canonical terms defined in YAML
 - **Learnable**: BERT model improves via production data
@@ -106,17 +108,17 @@ canonicalization:
       source: "event.action"
       context_fields: ["event.tool_name", "event.tool_method"]
       required: true
-      
+    
     - name: resource_type
       source: "event.resource.type"
       context_fields: ["event.tool_name", "event.resource.location"]
       required: true
-      
+    
     - name: sensitivity
       source: "event.data.sensitivity"
       context_fields: []
       required: true
-      
+    
     # Optional: canonicalize tool names too
     - name: tool_category
       source: "event.tool_name"
@@ -125,6 +127,7 @@ canonicalization:
 ```
 
 **Fail behavior** (configurable):
+
 - `passthrough`: Use raw term if not confidently mapped (safe, may fail matching)
 - `reject`: Return error to client (fail-fast, prevents bad data)
 - `default`: Map unknown terms to "other" category (risky, may over-block)
@@ -138,6 +141,7 @@ canonicalization:
 ### Problem: SDK Coupling
 
 The current enforcement system uses SDK callbacks (`AgentCallback` in LangChain/LangGraph), coupling Guard to specific agent frameworks. This prevents adoption across diverse environments:
+
 - Custom agents (home-grown orchestration)
 - n8n workflows (visual workflow builder, no code)
 - OpenAI API calls (direct SDK usage)
@@ -225,24 +229,26 @@ Replace SDK coupling with a single **HTTP endpoint** that any agent can call at 
 
 Agents call the endpoint at specific points in their execution flow, identified by hook type:
 
-| Hook Type | Description | Requires Decision | Use Case |
-|-----------|-------------|------------------|----------|
-| `pre_tool_call` | Before agent executes a tool | Yes | Most common - block unsafe operations |
-| `checkpoint` | At user-defined workflow gates | Yes | Multi-step workflows with approval points |
-| `audit` | After action completes | No | Logging only, no blocking |
-| `post_execution` | Log completed actions | No | Audit trail / forensics |
+
+| Hook Type        | Description                    | Requires Decision | Use Case                                  |
+| ------------------ | -------------------------------- | ------------------- | ------------------------------------------- |
+| `pre_tool_call`  | Before agent executes a tool   | Yes               | Most common - block unsafe operations     |
+| `checkpoint`     | At user-defined workflow gates | Yes               | Multi-step workflows with approval points |
+| `audit`          | After action completes         | No                | Logging only, no blocking                 |
+| `post_execution` | Log completed actions          | No                | Audit trail / forensics                   |
 
 ### Who Calls The Hook?
 
 **The agent code** (not Guard) calls the hook. Guard only provides the endpoint.
 
 **Example: LangGraph Agent**
+
 ```python
 # In the agent's tool execution handler
 async def execute_tool(state, config):
     tool_name = state.tool_name
     tool_input = state.tool_input
-    
+  
     # Agent calls Guard hook (new, framework-agnostic)
     response = await httpx.post(
         "https://guard.example.com/v2/guard/enforce",
@@ -257,15 +263,16 @@ async def execute_tool(state, config):
         },
         headers={"Authorization": f"Bearer {api_key}"}
     )
-    
+  
     if response.json()["decision"] == 0:  # Blocked
         raise PermissionError(f"Guard blocked: {response.json()['evidence']}")
-    
+  
     # Proceed with tool execution
     return tool.execute(tool_input)
 ```
 
 **Example: n8n Workflow**
+
 ```
 HTTP Request Node
 ├─ URL: POST /v2/guard/enforce
@@ -283,6 +290,7 @@ HTTP Request Node
 ```
 
 **Example: Direct OpenAI SDK Call**
+
 ```python
 # Wrapper function in agent codebase
 async def call_with_guard(model, messages, tools, **kwargs):
@@ -295,10 +303,10 @@ async def call_with_guard(model, messages, tools, **kwargs):
             "resource": "openai-api"
         }
     )
-    
+  
     if not guard_response.allowed:
         raise PermissionError(guard_response.evidence)
-    
+  
     # Proceed with OpenAI call
     return model.create(messages=messages, tools=tools, **kwargs)
 ```
@@ -317,12 +325,13 @@ async def call_with_guard(model, messages, tools, **kwargs):
 
 ### Model Selection
 
-| Model | Size | Inference | Training | Recommendation |
-|-------|------|-----------|----------|-----------------|
-| **TinyBERT** | 14.5M | <5ms | Fast | ✓ Preferred |
-| **DistilBERT** | 66M | <10ms | Moderate | Alternative |
-| **MiniLM** | 22M | <8ms | Moderate | Alternative |
-| **ALBERT-tiny** | 5M | <3ms | Very fast | Ultra-lightweight |
+
+| Model           | Size  | Inference | Training  | Recommendation    |
+| ----------------- | ------- | ----------- | ----------- | ------------------- |
+| **TinyBERT**    | 14.5M | <5ms      | Fast      | ✓ Preferred      |
+| **DistilBERT**  | 66M   | <10ms     | Moderate  | Alternative       |
+| **MiniLM**      | 22M   | <8ms      | Moderate  | Alternative       |
+| **ALBERT-tiny** | 5M    | <3ms      | Very fast | Ultra-lightweight |
 
 **Choice**: **TinyBERT** - Good balance of accuracy, speed, and training time.
 
@@ -359,16 +368,17 @@ Output: {
 Pre-train TinyBERT classifier using seed dataset before going to production:
 
 1. **Data Preparation**
+
    - Collect ~50K-100K labeled examples (see Data Collection section)
    - Stratify by canonical category to avoid bias
    - Create 80/10/10 train/val/test split
    - Tokenize to max 128 tokens per example
-
 2. **Model Architecture**
+
    ```python
    # TinyBERT backbone: 2-layer, 312 hidden units
    bert = TinyBertModel.from_pretrained("huawei-noah/TinyBERT-4L-312D")
-   
+
    # Multi-head classification (one head per field)
    classification_heads = {
        "action": LinearLayer(312 → 6),        # [read, write, update, delete, execute, export]
@@ -376,21 +386,21 @@ Pre-train TinyBERT classifier using seed dataset before going to production:
        "sensitivity": LinearLayer(312 → 3)    # [public, internal, secret]
    }
    ```
-
 3. **Training Pipeline**
+
    - Loss: Cross-entropy (per-field independent heads)
    - Optimizer: AdamW (lr=2e-5, warmup 10% of steps)
    - Epochs: 3-5 (early stopping on val loss)
    - Batch size: 32
    - Device: GPU (training), CPU (inference)
-
 4. **Validation & Metrics**
+
    - Per-field accuracy: Target ≥95%
    - Confidence calibration: Expected calibration error (ECE) <0.05
    - Precision/Recall per category
    - Inference latency: Measure on CPU (<10ms target)
-
 5. **Checkpoint Management**
+
    - Save best checkpoint (based on validation accuracy)
    - Store in: `management_plane/models/canonicalizer_tinybert_v1.0/`
    - Include tokenizer config, model weights, vocabulary
@@ -400,40 +410,41 @@ Pre-train TinyBERT classifier using seed dataset before going to production:
 After deployment, collect production data to improve the model:
 
 1. **Logging Collection**
+
    - Every canonicalization attempt is logged (see Phase 2 in Data Collection)
    - Store in `/var/log/guard/canonicalization/` (JSON lines format)
    - Retention: 90 days
    - Async logging to avoid latency impact
-
 2. **Signal Detection** (Weekly)
+
    - Low confidence predictions (< 0.8): Uncertain BERT predictions
    - Enforcement mismatches: High confidence but policy didn't match
    - New rare terms: Vocabulary not in seed dataset
    - Distribution shifts: Input patterns changing over time
-
 3. **Curation** (Monthly)
+
    - Human team reviews flagged examples
    - Correct mislabeled predictions
    - Add new categories if needed
    - Target: 500-1000 curated examples per cycle
-
 4. **Retraining** (Monthly)
+
    ```python
    # Combine seed dataset + curated production examples
    train_data = seed_dataset + monthly_curated_examples
-   
+
    # Fine-tune from previous checkpoint
    bert = load_model("canonicalizer_tinybert_v1.X")
-   
+
    # Continue training for 1-2 epochs (avoid catastrophic forgetting)
    for epoch in range(1, 3):
        for batch in train_loader:
            loss = compute_loss(bert(batch), batch.labels)
            optimizer.step()
-   
+
    # Validate on held-out test set
    accuracy = validate(bert, test_loader)
-   
+
    # A/B test before rollout
    if accuracy >= baseline:
        save_model(bert, "canonicalizer_tinybert_v1.X+1")
@@ -441,8 +452,8 @@ After deployment, collect production data to improve the model:
    else:
        log_failure_metrics()
    ```
-
 5. **Version Management**
+
    - Model versions: `canonicalizer_tinybert_v1.0`, `v1.1`, etc.
    - Track in git with model checkpoints
    - Backward compatible: Old vocab categories never removed
@@ -473,7 +484,7 @@ hooks:
     optional_fields: ["context", "session_id"]
     decision_required: true
     default_effect: "deny"  # Deny if no policy matches
-    
+  
   # Checkpoint enforcement (workflow gates)
   checkpoint:
     description: "Enforce at workflow checkpoint"
@@ -481,13 +492,13 @@ hooks:
     optional_fields: ["context"]
     decision_required: true
     default_effect: "deny"
-    
+  
   # Audit-only mode (logging, no blocking)
   audit:
     description: "Log intent without blocking"
     required_fields: ["intent"]
     decision_required: false
-    
+  
   # Post-execution logging
   post_execution:
     description: "Log completed actions for audit trail"
@@ -612,7 +623,7 @@ extraction:
       - "context.agent_id"
       - "context.user_id"
     fallback: "unknown"
-    
+  
   actor_type:
     sources:
       - "context.actor_type"
@@ -630,14 +641,14 @@ extraction:
           - match: "false"
             value: "not_required"
     fallback: "required"
-    
+  
   # Tool context (used by BERT canonicalizer)
   tool_name:
     sources:
       - "intent.tool_name"
       - "context.tool_name"
     fallback: null
-    
+  
   tool_method:
     sources:
       - "intent.tool_method"
@@ -670,12 +681,12 @@ canonicalization:
       source: "event.action"
       context_fields: ["event.tool_name", "event.tool_method"]
       required: true
-      
+    
     - name: resource_type
       source: "event.resource.type"
       context_fields: ["event.tool_name", "event.resource.location"]
       required: true
-      
+    
     - name: sensitivity
       source: "event.data.sensitivity"
       context_fields: []
@@ -686,7 +697,7 @@ canonicalization:
     high_confidence: 0.9   # Use prediction directly
     low_confidence: 0.7    # Flag for review but use
     reject: 0.5            # Below this: fail-safe behavior
-    
+  
   # Behavior when confidence is below threshold
   fail_behavior: "passthrough"  # passthrough | reject | default
 
@@ -869,39 +880,42 @@ vocabulary:
 **Sources**:
 
 1. **Public API Specifications** (30% of data)
+
    - OpenAPI specs: Stripe, Twilio, GitHub, AWS, GCP, Slack, etc.
    - Extract: verbs, nouns, parameters
    - Benefit: Real-world, diverse, standardized
-
 2. **LLM Tool-Use Datasets** (20% of data)
+
    - ToolBench (1.6M tool instructions)
    - API-Bank (645 APIs, 9K tool-use examples)
    - ToolAlpaca (3.9K tool-use instructions)
    - Benefit: Agent-specific patterns
-
 3. **Database & Storage Patterns** (20% of data)
+
    - SQL operation verbs (SELECT, INSERT, UPDATE, DELETE)
    - NoSQL operations (put, get, delete, scan)
    - File operations (read, write, append, truncate)
    - Benefit: Core data operations
-
 4. **Synthetic Variations** (20% of data)
+
    - Template-based generation: "Generate 20 ways to express 'read from database'"
    - Human review before inclusion
    - Benefit: Handles synonyms, context variations
-
 5. **Manual Curation** (10% of data)
+
    - Domain experts define high-confidence examples per category
    - Edge cases and ambiguities
    - Benefit: Ensures coverage of corner cases
 
 **Bias Mitigation**:
+
 - Stratified sampling: Equal examples per canonical category
 - Diverse sources: No single API style dominates
 - Human review: Flag and remove outliers
 - Version control: Track data provenance
 
 **Seed Dataset Structure**:
+
 ```json
 {
   "id": "seed-001",
@@ -965,6 +979,7 @@ vocabulary:
 ```
 
 **Key Signals for Curation**:
+
 1. **Low confidence** (confidence < 0.8): Uncertain predictions
 2. **Enforcement mismatch**: High confidence but no policy matched
 3. **New terms**: Rare/unseen vocabulary
@@ -1008,6 +1023,7 @@ Updated BERT Model
 ```
 
 **Retraining Schedule**:
+
 - **Weekly**: Analyze logs, identify candidates
 - **Monthly**: Curation sprint + retraining
 - **Quarterly**: Vocabulary review + updates
@@ -1019,6 +1035,7 @@ Updated BERT Model
 ### Metrics Tracked
 
 Per classification head:
+
 - **Accuracy**: % of correct predictions
 - **Confidence calibration**: Do confidence scores match reality?
 - **Precision/Recall**: Per canonical category
@@ -1065,6 +1082,7 @@ vocabulary:
 **Route**: `POST /v2/guard/enforce`
 
 **Request Model**:
+
 ```python
 class HookRequest(BaseModel):
     """Flexible input from any agent framework."""
@@ -1075,6 +1093,7 @@ class HookRequest(BaseModel):
 ```
 
 **Implementation**:
+
 ```python
 # management_plane/app/endpoints/hooks.py
 
@@ -1085,7 +1104,7 @@ async def enforce_hook(
 ) -> HookEnforcementResult:
     """
     Agent-agnostic enforcement endpoint.
-    
+  
     1. Validates hook type (hooks.yaml)
     2. Extracts fields from flexible input (extraction.yaml)
     3. Canonicalizes via BERT classifier
@@ -1094,32 +1113,32 @@ async def enforce_hook(
     """
     # Validate hook
     hook_config = validate_hook(request.hook, hooks_yaml_config)
-    
+  
     # Extract fields from flexible input
     extracted = extract_fields(
         request.intent,
         request.context,
         extraction_yaml_config
     )
-    
+  
     # Canonicalize vocabulary via BERT
     canonicalized = canonicalizer.canonicalize(
         extracted,
         confidence_thresholds=canonicalization_yaml_config.thresholds,
         fail_behavior="default"  # Use defaults for unknown terms
     )
-    
+  
     # Build complete IntentEvent
     intent_event = build_intent_event(
         canonicalized,
         defaults_from_extraction_yaml
     )
     intent_event.tenantId = current_user.id
-    
+  
     # Encode and enforce (existing flow)
     vector = encode_to_128d(intent_event)
     enforcement_result = await client.enforce(intent_event, vector.tolist())
-    
+  
     # Return enriched result
     return HookEnforcementResult(
         decision=enforcement_result.decision,
@@ -1131,6 +1150,7 @@ async def enforce_hook(
 ```
 
 **Response Model**:
+
 ```python
 class CanonicalizedFields(BaseModel):
     """Result of extraction + canonicalization."""
@@ -1145,7 +1165,7 @@ class CanonicalizedFields(BaseModel):
     authn: str
     tool_name: Optional[str]
     tool_method: Optional[str]
-    
+  
     # Canonicalization metadata
     confidence_scores: dict[str, float]  # {field: confidence}
     inferred_fields: list[str]           # Fields inferred vs explicit
@@ -1161,6 +1181,7 @@ class HookEnforcementResult(BaseModel):
 ```
 
 **Example Usage** (from Agent):
+
 ```bash
 curl -X POST https://guard.example.com/v2/guard/enforce \
   -H "Authorization: Bearer $API_KEY" \
@@ -1238,26 +1259,26 @@ class Canonicalizer:
     def __init__(self, config: CanonicalizationConfig):
         self.bert_model = load_tinybert(config.model_name)
         self.config = config
-        
+      
     def canonicalize_intent(self, intent: IntentEvent) -> CanonicalizedIntent:
         """Canonicalize all configured fields in intent.
-        
+      
         After canonicalization, the intent is passed to IntentEncoder
         (a subclass of SemanticEncoder) for semantic encoding.
         """
         canonicalized = intent.copy()
         logs = []
-        
+      
         for field_config in self.config.fields:
             raw_value = self._extract_field(intent, field_config.source)
             context = self._build_context(intent, field_config)
-            
+          
             prediction = self.bert_model.predict(
                 text=raw_value,
                 context=context,
                 field=field_config.name
             )
-            
+          
             # Log for learning loop
             logs.append(CanonicalLog(
                 field=field_config.name,
@@ -1265,7 +1286,7 @@ class Canonicalizer:
                 prediction=prediction,
                 timestamp=now()
             ))
-            
+          
             # Apply confidence threshold
             if prediction.confidence >= self.config.thresholds.high_confidence:
                 self._set_field(canonicalized, field_config.source, prediction.label)
@@ -1275,15 +1296,16 @@ class Canonicalizer:
             else:
                 # Passthrough - use raw value
                 pass
-        
+      
         # Persist logs asynchronously
         asyncio.create_task(self._log_predictions(logs, intent))
-        
+      
         return canonicalized
 ```
 
 **Integration with IntentEncoder:**
 After canonicalization, the `CanonicalizedIntent` is passed to `IntentEncoder` (which inherits from `SemanticEncoder`):
+
 ```python
 # In enforcement endpoint
 canonical_intent = canonicalizer.canonicalize_intent(raw_intent)
@@ -1301,12 +1323,12 @@ async def install_policies(
     api_key: str = Depends(verify_api_key)
 ):
     """Install policies with validation and canonicalization.
-    
+  
     After canonicalization, policies are passed to PolicyEncoder
     (a subclass of SemanticEncoder) for anchor vector encoding.
     """
     canonicalizer = get_canonicalizer()
-    
+  
     # Validate policy anchors use canonical terms
     for policy in request.policies:
         for slot_name, anchor_terms in policy.anchors.items():
@@ -1316,12 +1338,12 @@ async def install_policies(
                     # Try to canonicalize
                     canonical = canonicalizer.canonicalize_single(term, slot_name)
                     # Log + continue (silent canonicalization)
-    
+  
     # Encode policies using PolicyEncoder (inherits from SemanticEncoder)
     policy_encoder = get_policy_encoder()
     for policy in request.policies:
         policy.anchors = policy_encoder.encode(policy)  # Returns RuleVector
-    
+  
     # Install canonicalized, encoded policies
     return install_rules(request)
 ```
@@ -1331,6 +1353,7 @@ async def install_policies(
 After canonicalization, both intents and policies are encoded using a shared **SemanticEncoder** infrastructure. This base class handles all common encoding tasks:
 
 **SemanticEncoder (Base Class) - Shared Responsibilities:**
+
 - Load and cache sentence-transformers model (`all-MiniLM-L6-v2`, 384d)
 - Generate deterministic projection matrix from seed
 - Encode text inputs to 384d embeddings
@@ -1366,6 +1389,7 @@ After canonicalization, both intents and policies are encoded using a shared **S
 ```
 
 **Intent Flow:**
+
 ```
 IntentEvent (raw)
     ↓ Canonicalize
@@ -1381,6 +1405,7 @@ Single 128d intent vector
 ```
 
 **Policy Flow:**
+
 ```
 Policy (raw)
     ↓ Canonicalize
@@ -1402,6 +1427,7 @@ RuleVector: 4 slots × 16 anchors × 32d
 ### Week 1: BERT Model, Hook System & Configuration
 
 **Task 1: Seed Dataset Collection & Preparation** (12 hours)
+
 - Collect public API specs (Stripe, GitHub, AWS, etc)
 - Download ToolBench, API-Bank datasets
 - Synthesize variations (template-based generation)
@@ -1410,6 +1436,7 @@ RuleVector: 4 slots × 16 anchors × 32d
 - Output: ~50K-100K labeled examples
 
 **Task 2: Build & Train BERT Classifier** (12 hours)
+
 - Download TinyBERT from HuggingFace
 - Create multi-head classification architecture
   - action_head: softmax(6 classes)
@@ -1420,6 +1447,7 @@ RuleVector: 4 slots × 16 anchors × 32d
 - Save best checkpoint to `management_plane/models/canonicalizer_tinybert_v1.0/`
 
 **Task 3: Create YAML Configurations** (3 hours)
+
 - Create `config/hooks.yaml` (hook types, required fields)
 - Create `config/extraction.yaml` (field mappings, inference rules)
 - Create `config/canonicalization.yaml` (thresholds, logging config)
@@ -1427,6 +1455,7 @@ RuleVector: 4 slots × 16 anchors × 32d
 - Load configs at startup with validation
 
 **Task 4: Implement Field Extractor** (6 hours)
+
 - Create `management_plane/app/services/field_extractor.py`
 - Detect input format (structured vs natural language)
 - Apply extraction mappings from extraction.yaml
@@ -1434,6 +1463,7 @@ RuleVector: 4 slots × 16 anchors × 32d
 - Support inference rules (regex patterns for tool_name → resource_type)
 
 **Task 5: Implement Canonicalizer Service** (6 hours)
+
 - Create `management_plane/app/services/canonicalizer.py`
 - Load BERT model at startup (cached)
 - Implement `canonicalize()` method
@@ -1442,6 +1472,7 @@ RuleVector: 4 slots × 16 anchors × 32d
 - Logging: track predictions + confidence
 
 **Task 6: Implement Hook Endpoint** (6 hours)
+
 - Create `management_plane/app/endpoints/hooks.py`
 - Implement `POST /v2/guard/enforce` endpoint
 - Hook validation (hooks.yaml)
@@ -1450,6 +1481,7 @@ RuleVector: 4 slots × 16 anchors × 32d
 - Return HookEnforcementResult with trace info
 
 **Task 7: Implement SemanticEncoder base class** (6 hours)
+
 - Create `management_plane/app/services/semantic_encoder.py`
 - Implement abstract `SemanticEncoder` class with:
   - Shared sentence-transformers model loading and caching
@@ -1462,6 +1494,7 @@ RuleVector: 4 slots × 16 anchors × 32d
 - Add comprehensive docstrings explaining shared responsibilities
 
 **Task 8: Logging Infrastructure** (4 hours)
+
 - Create `management_plane/app/services/canonicalization_logger.py`
 - Async logging: predictions + confidence + outcomes
 - Store in `/var/log/guard/canonicalization/` (JSON lines format)
@@ -1471,6 +1504,7 @@ RuleVector: 4 slots × 16 anchors × 32d
 ### Week 2: Integration Testing & Encoder Implementation
 
 **Task 9: Unit Tests for Canonicalizer & Extractor** (6 hours)
+
 - Test field extraction (all source priorities)
 - Test inference rules (regex matching)
 - Test fallback behavior
@@ -1478,6 +1512,7 @@ RuleVector: 4 slots × 16 anchors × 32d
 - Test confidence threshold logic
 
 **Task 10: Integration Testing** (8 hours)
+
 - End-to-end hook request flow
 - Test canonicalization on diverse inputs
 - Verify canonical fields are valid per IntentEvent schema
@@ -1486,6 +1521,7 @@ RuleVector: 4 slots × 16 anchors × 32d
 - Verify no regressions in existing enforcement
 
 **Task 11: Implement IntentEncoder subclass** (3 hours)
+
 - Create `IntentEncoder` class inheriting from `SemanticEncoder`
 - Implement `extract_slots(canonical_intent)` to extract 4 semantic slots
 - Implement `encode(canonical_intent)` to return 128d intent vector
@@ -1493,6 +1529,7 @@ RuleVector: 4 slots × 16 anchors × 32d
 - Add unit tests for slot extraction and vector aggregation
 
 **Task 12: Implement PolicyEncoder subclass** (3 hours)
+
 - Create `PolicyEncoder` class inheriting from `SemanticEncoder`
 - Implement `extract_slots(canonical_policy)` to extract anchor groups
 - Implement `encode(canonical_policy)` to return RuleVector (4×16×32)
@@ -1502,12 +1539,14 @@ RuleVector: 4 slots × 16 anchors × 32d
 ### Week 3: Production Logging & Learning Loop Setup
 
 **Task 13: Production Logging Collection** (4 hours)
+
 - Ensure canonicalization logger captures all signals
 - Log enforcement outcomes alongside predictions
 - Implement query API for logs (by field, date, confidence, tenant)
 - Verify async logging doesn't impact latency
 
 **Task 14: Curation Pipeline Setup** (6 hours)
+
 - Create schema for curated examples (approved by human)
 - Create admin interface for human review (web or CLI tool)
 - Query low-confidence predictions from logs
@@ -1515,6 +1554,7 @@ RuleVector: 4 slots × 16 anchors × 32d
 - Export approved examples as new training data
 
 **Task 15: Retraining Automation** (6 hours)
+
 - Create monthly retraining script
   - Load seed dataset + curated examples
   - Prepare train/val/test splits (80/10/10)
@@ -1525,6 +1565,7 @@ RuleVector: 4 slots × 16 anchors × 32d
 - Create model versioning system (`v1.0` → `v1.1`, etc)
 
 **Task 16: Monitoring & Observability** (6 hours)
+
 - Dashboard: canonicalization accuracy per field over time
 - Dashboard: confidence distribution across fields
 - Dashboard: coverage (% of real-world vocabulary handled)
@@ -1534,6 +1575,7 @@ RuleVector: 4 slots × 16 anchors × 32d
 - Metrics: count of fallback fields used
 
 **Task 17: Documentation & Examples** (4 hours)
+
 - API documentation for `/v2/guard/enforce` endpoint
 - Example curl commands for different hook types
 - Example agent integration code (LangGraph, n8n, OpenAI SDK)
@@ -1546,27 +1588,32 @@ RuleVector: 4 slots × 16 anchors × 32d
 ## Success Criteria
 
 ### Canonicalization Performance
+
 - **Accuracy**: ≥95% on test set per field (action, resource_type, sensitivity)
 - **Latency**: <10ms per canonicalization (CPU)
 - **Inference scalability**: Handle 1000+ requests/sec on modest hardware
 
 ### Hook System
+
 - **Framework agnostic**: Works with any agent (LangGraph, LangChain, n8n, custom)
 - **Input flexibility**: Accepts structured, natural language, or hybrid intent format
 - **Fail-safe defaults**: Unknown terms default to safe values, flagged in response
 - **Observable**: Trace data shows canonicalization decisions for debugging
 
 ### Data Quality
+
 - **Zero enforcement regressions**: No increase in false blocks vs baseline
 - **Coverage**: Handles ≥95% of real-world vocabulary (from production)
 - **Precision per category**: ≥90% precision for each canonical class
 
 ### Production Learning Loop
+
 - **Data collection**: Log 100% of predictions with confidence + outcomes
 - **Curation**: Monthly retraining with ≥500 curated examples per cycle
 - **Model versioning**: Track versions with backward compatibility
 
 ### Encoder Architecture
+
 - **Inheritance**: SemanticEncoder base class handles 100% of shared logic
 - **Code reuse**: ≥60% reduction in code duplication (IntentEncoder + PolicyEncoder)
 - **Consistency**: Both encoder subclasses produce deterministic outputs for identical canonical inputs
@@ -1578,25 +1625,27 @@ RuleVector: 4 slots × 16 anchors × 32d
 
 ### Public APIs (OpenAPI specs)
 
-| Source | Count | Notes |
-|--------|-------|-------|
-| Stripe API | ~200 endpoints | Payment operations |
-| AWS API | ~10K endpoints | Infrastructure |
-| GitHub API | ~150 endpoints | Developer tools |
-| Google Cloud | ~1K endpoints | Cloud services |
-| Twilio | ~50 endpoints | Communications |
-| Notion API | ~30 endpoints | Document management |
-| Slack API | ~100 endpoints | Chat/collaboration |
+
+| Source       | Count          | Notes               |
+| -------------- | ---------------- | --------------------- |
+| Stripe API   | ~200 endpoints | Payment operations  |
+| AWS API      | ~10K endpoints | Infrastructure      |
+| GitHub API   | ~150 endpoints | Developer tools     |
+| Google Cloud | ~1K endpoints  | Cloud services      |
+| Twilio       | ~50 endpoints  | Communications      |
+| Notion API   | ~30 endpoints  | Document management |
+| Slack API    | ~100 endpoints | Chat/collaboration  |
 
 **Collection**: Parse OpenAPI specs → extract verbs, nouns, parameters
 
 ### Public Datasets
 
-| Dataset | Size | Focus | License |
-|---------|------|-------|---------|
-| ToolBench | 1.6M | Tool use instructions | Apache 2.0 |
-| API-Bank | 9K | API calling patterns | MIT |
-| ToolAlpaca | 3.9K | LLM tool use | CC-BY-NC |
+
+| Dataset    | Size | Focus                 | License    |
+| ------------ | ------ | ----------------------- | ------------ |
+| ToolBench  | 1.6M | Tool use instructions | Apache 2.0 |
+| API-Bank   | 9K   | API calling patterns  | MIT        |
+| ToolAlpaca | 3.9K | LLM tool use          | CC-BY-NC   |
 
 ### Internal Sources (Post-Launch)
 
