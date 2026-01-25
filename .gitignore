@@ -101,6 +101,7 @@ Desktop.ini
 # Logs
 *.log
 logs/
+data/logs/
 *.log.*
 
 # ML Models & Embeddings Cache
