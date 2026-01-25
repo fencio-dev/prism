@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .settings import config
-from .endpoints import agents, auth, boundaries, encoding, enforcement, enforcement_v2, health, intents, telemetry
+from .endpoints import enforcement_v2, health
 
 # Configure logging
 logging.basicConfig(
@@ -91,21 +91,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             except Exception as e:
                 logger.warning(f"Canonicalization services initialization warning: {e}")
 
-        # Seed a default test boundary for E2E tests if none exist
-        try:
-            from .endpoints.boundaries import _boundaries_store  # in-memory demo store
-            from .endpoints.intents import _get_test_boundary
-
-            if not _boundaries_store:
-                test_boundary = _get_test_boundary()
-                _boundaries_store[test_boundary.id] = test_boundary
-                logger.info(
-                    "Seeded default test boundary '%s' for E2E tests",
-                    test_boundary.id,
-                )
-        except Exception as se:
-            logger.warning("Boundary seeding skipped: %s", se)
-
     except Exception as e:
         logger.error(f"Startup validation failed: {e}", exc_info=True)
         raise
@@ -149,13 +134,6 @@ app.add_middleware(
 
 # Register routers
 app.include_router(health.router)
-app.include_router(auth.router, prefix=config.API_V1_PREFIX)  # Token validation for gRPC proxy
-app.include_router(intents.router, prefix=config.API_V1_PREFIX)
-app.include_router(boundaries.router, prefix=config.API_V1_PREFIX)
-app.include_router(telemetry.router, prefix=config.API_V1_PREFIX)
-app.include_router(encoding.router, prefix=config.API_V1_PREFIX)  # v1.3: Encoding endpoints
-app.include_router(agents.router, prefix=config.API_V1_PREFIX)  # v1.0: Agent policies
-app.include_router(enforcement.router, prefix=config.API_V1_PREFIX)
 app.include_router(enforcement_v2.router, prefix=config.API_V2_PREFIX)  # NEW v2: Canonicalization + Enforcement
 
 
