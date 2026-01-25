@@ -15,7 +15,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize the bridge with all 14 family tables
     println!("Initializing Bridge with 14 rule family tables...");
-    let bridge_inst = Arc::new(Bridge::init());
+    let bridge_inst = match Bridge::init() {
+        Ok(bridge) => Arc::new(bridge),
+        Err(e) => {
+            eprintln!("✗ Failed to initialize Bridge: {}", e);
+            return Err(e.into());
+        }
+    };
     println!("✓ Bridge initialized");
     println!("  - {} tables created", bridge_inst.table_count());
     println!("  - Version: {}", bridge_inst.version());
