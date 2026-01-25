@@ -29,7 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Start gRPC server for rule installation and enforcement
     let grpc_port = 50051;
     let management_plane_url = std::env::var("MANAGEMENT_PLANE_URL")
-        .unwrap_or_else(|_| "http://localhost:8000/api/v1".to_string());
+        .unwrap_or_else(|_| "http://localhost:8000/api/v2".to_string());
 
     println!("Starting gRPC server for rule installation and enforcement...");
     println!("  - Listening on: 0.0.0.0:{}", grpc_port);

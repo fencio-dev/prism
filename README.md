@@ -33,35 +33,22 @@ Logs are written to:
 - Management Plane: `data/logs/management-plane.log`
 - Data Plane: `data/logs/data-plane.log`
 
-### Development Commands
+### Essential Make Commands
 
 ```bash
-# Run management plane only (faster iteration)
+# Run both services with logging
+make run-all
+
+# Run management plane only
 make run-mgmt
-# or
-make r
 
 # Run data plane only
 make run-data
-# or
-make rd
-
-# Run both services
-make run-all
-# or
-make ra
 
 # Run all tests
 make test
 
-# Build specific component
-make build-data      # Build data plane
-make build-rust      # Build semantic-sandbox
-
-# Clean build artifacts
-make clean
-
-# View available commands
+# View all available commands
 make help
 ```
 

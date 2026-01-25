@@ -173,7 +173,7 @@ $DOCKER_COMPOSE -f docker-compose.local.yml ps
 echo ""
 echo "🌐 Service URLs (all accessible from your browser):"
 echo "  Console:             http://localhost:8080"
-echo "  Management Plane:    http://localhost:8000/api/v1"
+echo "  Management Plane:    http://localhost:8000/api/v2"
 echo "  ChromaDB:            http://localhost:8002"
 echo "  Data Plane gRPC:     localhost:50051"
 echo ""

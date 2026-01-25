@@ -72,7 +72,7 @@ run-mgmt:
 run-data:
 	@echo "Starting data-plane server on port 50051..."
 	@mkdir -p data/logs
-	cd data_plane/tupl_dp/bridge && cargo run --release
+	cd data_plane/tupl_dp/bridge && cargo run --bin bridge-server
 
 run-all:
 	@echo "Starting both management-plane (8000) and data-plane (50051)..."
@@ -82,7 +82,7 @@ run-all:
 	@echo ""
 	@mkdir -p data/logs
 	@trap 'kill 0' EXIT; \
-	(cd data_plane/tupl_dp/bridge && cargo run --release > ../../../../../../data/logs/data-plane.log 2>&1) & \
+	(cd data_plane/tupl_dp/bridge && cargo run --bin bridge-server > ../../../../../../data/logs/data-plane.log 2>&1) & \
 	sleep 3; \
 	(cd management_plane && uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 >> ../data/logs/management-plane.log 2>&1) & \
 	wait
