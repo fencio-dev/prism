@@ -4,7 +4,7 @@
 //! 1. Receives IntentEvent from SDK via gRPC
 //! 2. Calls Management Plane to encode intent to 128d vector
 //! 3. Queries rules from Bridge for the specified layer
-//! 4. Calls semantic-sandbox FFI to compare intent against each rule's anchors
+//! 4. Compares intent vector directly against rule anchors using in-process comparison
 //! 5. Implements short-circuit evaluation (first BLOCK stops evaluation)
 //! 6. Returns enforcement decision with evidence
 //! 7. Records complete telemetry to /var/hitlogs for audit trail
@@ -15,30 +15,34 @@ use std::time::{Duration, Instant};
 use crate::api_types::IntentEvent;
 use reqwest::{header::CONTENT_TYPE, Client};
 use serde::Deserialize;
+use serde_json::Value;
 
 use crate::bridge::Bridge;
 use crate::rule_vector::RuleVector;
-use crate::types::{RuleFamilyId, RuleInstance};
-use crate::telemetry::{
-    EnforcementSession, RuleEvaluationEvent, SessionEvent,
-    TelemetryRecorder,
-};
 use crate::telemetry::session::SliceComparisonDetail;
-use semantic_sandbox::{compare_vectors, ComparisonResult as SandboxResult, VectorEnvelope};
+use crate::telemetry::{EnforcementSession, RuleEvaluationEvent, SessionEvent, TelemetryRecorder};
+use crate::types::RuleInstance;
+use crate::vector_comparison::{compare_intent_vs_rule, ComparisonResult, DecisionMode};
 
 const CONNECT_TIMEOUT_MS: u64 = 500;
 const REQUEST_TIMEOUT_MS: u64 = 1_500;
-const DEFAULT_WEIGHTS: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 
 // Per-slot thresholds for ToolWhitelist family
 // [Action, Resource, Data, Risk]
 // Resource slot (0.88) is most critical for tool identity matching
 // Calibrated to distinguish exact tool matches from semantic similarities
 // Action threshold lowered to 0.60 to account for semantic variation (read/query/search)
-const TOOL_WHITELIST_THRESHOLDS: [f32; 4] = [0.60, 0.88, 0.70, 0.60];
 
 // Default thresholds for other rule families
 const DEFAULT_THRESHOLDS: [f32; 4] = [0.75, 0.75, 0.75, 0.75];
+
+#[derive(Debug, Deserialize)]
+struct SliceThresholdsPayload {
+    action: f32,
+    resource: f32,
+    data: f32,
+    risk: f32,
+}
 
 // ============================================================================
 // Data Structures
@@ -153,9 +157,10 @@ impl EnforcementEngine {
         println!("Enforcing intent for layer: {}", layer);
 
         // Start telemetry session
-        let session_id = self.telemetry.as_ref().and_then(|t| {
-            t.start_session(layer.to_string(), intent_json.to_string())
-        });
+        let session_id = self
+            .telemetry
+            .as_ref()
+            .and_then(|t| t.start_session(layer.to_string(), intent_json.to_string()));
 
         // Populate agent_id and tenant_id from IntentEvent
         if let (Some(ref telemetry), Some(ref sid)) = (&self.telemetry, &session_id) {
@@ -192,7 +197,8 @@ impl EnforcementEngine {
             });
         }
 
-        let (intent_vector, encoding_duration, vector_norm) = if let Some(vector) = vector_override {
+        let (intent_vector, encoding_duration, vector_norm) = if let Some(vector) = vector_override
+        {
             let norm = vector.iter().map(|v| v * v).sum::<f32>().sqrt();
             (vector, 0u64, norm)
         } else {
@@ -325,6 +331,10 @@ impl EnforcementEngine {
             let result = self.compare_with_sandbox(&intent_vector, &rule_vector, &rule)?;
             let rule_eval_duration = rule_eval_start.elapsed().as_micros() as u64;
 
+            // Mark rule as recently evaluated (updates LRU timestamp in hot cache)
+            // This prevents it from being evicted, as it's actively being used
+            let _ = self.bridge.hot_cache.get_and_mark(rule.rule_id());
+
             // Record evidence
             evidence.push(RuleEvidence {
                 rule_id: rule.rule_id().to_string(),
@@ -338,6 +348,13 @@ impl EnforcementEngine {
                 let thresholds = self.get_thresholds(&rule);
                 let slice_details = self.build_slice_details(&result, &thresholds);
 
+                let payload = rule.management_plane_payload();
+                let rule_family = payload
+                    .get("rule_type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("design_boundary")
+                    .to_string();
+
                 telemetry.with_session(sid, |session| {
                     session.add_event(SessionEvent::RuleEvaluationCompleted {
                         timestamp_us: EnforcementSession::timestamp_us(),
@@ -350,7 +367,7 @@ impl EnforcementEngine {
                     // Add detailed rule evaluation record
                     session.add_rule_evaluation(RuleEvaluationEvent {
                         rule_id: rule.rule_id().to_string(),
-                        rule_family: rule.family_id().family_id().to_string(),
+                        rule_family,
                         priority: rule.priority(),
                         description: rule.description().map(|s| s.to_string()),
                         started_at_us: EnforcementSession::timestamp_us() - rule_eval_duration,
@@ -503,72 +520,42 @@ impl EnforcementEngine {
 
     /// Query rules for a specific layer from Bridge
     fn get_rules_for_layer(&self, layer: &str) -> Result<Vec<Arc<dyn RuleInstance>>, String> {
-        use crate::types::LayerId;
-
         println!("Querying rules for layer: {}", layer);
 
-        // Parse layer string to LayerId
-        let layer_id = match layer {
-            "L0" => LayerId::L0System,
-            "L1" => LayerId::L1Input,
-            "L2" => LayerId::L2Planner,
-            "L3" => LayerId::L3ModelIO,
-            "L4" => LayerId::L4ToolGateway,
-            "L5" => LayerId::L5RAG,
-            "L6" => LayerId::L6Egress,
-            _ => return Err(format!("Unknown layer: {}", layer)),
-        };
+        let requested_layer = if layer.is_empty() { None } else { Some(layer) };
 
-        // Get all tables for this layer
-        let tables = self.bridge.get_tables_by_layer(&layer_id);
+        let mut filtered: Vec<_> = self
+            .bridge
+            .all_rules()
+            .into_iter()
+            .filter(|rule| match (rule.layer(), requested_layer) {
+                (None, _) => true,
+                (Some(rule_layer), Some(requested)) => rule_layer == requested,
+                (Some(_), None) => false,
+            })
+            .collect();
 
-        let mut all_rules = Vec::new();
+        filtered.sort_by(|a, b| b.priority().cmp(&a.priority()));
 
-        // Query all rules from each table in this layer
-        for (_family_id, table) in tables {
-            let table_guard = table.read();
-            let rules = table_guard.query_all();
-            all_rules.extend(rules);
-        }
-
-        // Sort by priority (higher priority first)
-        all_rules.sort_by(|a, b| b.priority().cmp(&a.priority()));
-
-        println!("Found {} rules for layer {}", all_rules.len(), layer);
-        Ok(all_rules)
+        println!("Found {} rules for layer {}", filtered.len(), layer);
+        Ok(filtered)
     }
 
-    /// Get cached rule vector or encode from Management Plane
-    /// Compare intent vector against rule anchors using semantic sandbox
+    /// Compare intent vector against rule anchors using direct in-process comparison
     fn compare_with_sandbox(
         &self,
         intent_vector: &[f32; 128],
         rule_vector: &RuleVector,
         rule: &Arc<dyn RuleInstance>,
-    ) -> Result<SandboxResult, String> {
-        let thresholds = match rule.family_id() {
-            RuleFamilyId::ToolWhitelist => TOOL_WHITELIST_THRESHOLDS,
-            RuleFamilyId::ToolParamConstraint => DEFAULT_THRESHOLDS,
-            _ => DEFAULT_THRESHOLDS,
-        };
+    ) -> Result<ComparisonResult, String> {
+        let (thresholds, decision_mode) = self.get_rule_thresholds(rule);
 
-        let envelope = VectorEnvelope {
-            intent: *intent_vector,
-            action_anchors: rule_vector.action_anchors,
-            action_anchor_count: rule_vector.action_count,
-            resource_anchors: rule_vector.resource_anchors,
-            resource_anchor_count: rule_vector.resource_count,
-            data_anchors: rule_vector.data_anchors,
-            data_anchor_count: rule_vector.data_count,
-            risk_anchors: rule_vector.risk_anchors,
-            risk_anchor_count: rule_vector.risk_count,
+        Ok(compare_intent_vs_rule(
+            intent_vector,
+            rule_vector,
             thresholds,
-            weights: DEFAULT_WEIGHTS,
-            decision_mode: 0, // min-mode short-circuit for ToolGateway
-            global_threshold: 0.0,
-        };
-
-        Ok(compare_vectors(&envelope))
+            decision_mode,
+        ))
     }
 
     /// Calculate average similarities across all evidence
@@ -595,16 +582,13 @@ impl EnforcementEngine {
 
     /// Get thresholds for a rule family
     fn get_thresholds(&self, rule: &Arc<dyn RuleInstance>) -> [f32; 4] {
-        match rule.family_id() {
-            RuleFamilyId::ToolWhitelist => TOOL_WHITELIST_THRESHOLDS,
-            _ => DEFAULT_THRESHOLDS,
-        }
+        self.get_rule_thresholds(rule).0
     }
 
     /// Build detailed slice comparison data for telemetry
     fn build_slice_details(
         &self,
-        result: &SandboxResult,
+        result: &ComparisonResult,
         thresholds: &[f32; 4],
     ) -> Vec<SliceComparisonDetail> {
         let slice_names = ["action", "resource", "data", "risk"];
@@ -635,6 +619,37 @@ impl EnforcementEngine {
     /// Get telemetry statistics
     pub fn telemetry_stats(&self) -> Option<crate::telemetry::recorder::TelemetryStats> {
         self.telemetry.as_ref().map(|t| t.stats())
+    }
+
+    fn get_rule_thresholds(&self, rule: &Arc<dyn RuleInstance>) -> ([f32; 4], DecisionMode) {
+        let payload = rule.management_plane_payload();
+
+        if let Value::Object(map) = payload {
+            let mut thresholds = DEFAULT_THRESHOLDS;
+            if let Some(Value::String(threshold_str)) = map.get("thresholds") {
+                if let Ok(decoded) = serde_json::from_str::<SliceThresholdsPayload>(threshold_str) {
+                    thresholds = [
+                        decoded.action,
+                        decoded.resource,
+                        decoded.data,
+                        decoded.risk,
+                    ];
+                }
+            }
+
+            let decision = map
+                .get("rule_decision")
+                .and_then(Value::as_str)
+                .map(|s| match s {
+                    "weighted-avg" => DecisionMode::WeightedAvgMode,
+                    _ => DecisionMode::MinMode,
+                })
+                .unwrap_or(DecisionMode::MinMode);
+
+            return (thresholds, decision);
+        }
+
+        (DEFAULT_THRESHOLDS, DecisionMode::MinMode)
     }
 }
 

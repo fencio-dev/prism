@@ -1,76 +1,106 @@
+use crate::families::DesignBoundaryRule;
 use crate::rule_vector::RuleVector;
-use crate::table::RuleFamilyTable;
-use crate::types::{now_ms, LayerId, RuleFamilyId, RuleInstance};
+use crate::storage::{ColdStorage, HotCache, StorageStats, WarmStorage};
+use crate::types::{now_ms, RuleInstance, RuleMetadata};
 use parking_lot::RwLock;
-/// Implements the bridge structure that manages all the rule family tables.
-/// The Bridge acts as a multiplexer for 14 rule family tables (one per family),
-/// providing unified access, versioning and lifecycle management.
-///
-/// # Architecture
-/// - One table per rule family (not per layer)
-/// - Lock-free reads via atomic Arc pointers
-/// - Copy-on-write for hot-reload scenarios
-/// - Per-family indexing optimized for evaluation patterns
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
+
+// ================================================================================================
+// STORAGE CONFIGURATION
+// ================================================================================================
+
+/// Configuration for Bridge tiered storage.
+#[derive(Clone, Debug)]
+pub struct StorageConfig {
+    /// Path to warm storage file (mmap)
+    pub warm_storage_path: PathBuf,
+    /// Path to cold storage database (SQLite)
+    pub cold_storage_path: PathBuf,
+}
+
+impl Default for StorageConfig {
+    fn default() -> Self {
+        Self {
+            warm_storage_path: PathBuf::from("./var/data/warm_storage.bin"),
+            cold_storage_path: PathBuf::from("./var/data/cold_storage.db"),
+        }
+    }
+}
 
 // ================================================================================================
 // BRIDGE STRUCTURE
 // ================================================================================================
 
-/// The Bridge is the root data structure for storing all rules in the data plane
+/// The Bridge is the root data structure for storing all rules in the data plane.
 ///
-/// It maintains 14 independent tables (one per rule family), each optimized
-/// for a specific rule schema and indexing strategy.
-///
-/// # Thread Safety
-/// - Tables are stored behind Arc<RwLock<>> for safe concurrent access
-/// - Reads can occur simultaneously across all tables
-/// - Writes to one table don't block reads/writes to other tables
-///
-/// # Versioning
-/// - Bridge has a global version number
-/// - Each table has its own version number
-/// - Versions increment on any modification
-
+/// All rules are stored in tiered storage only (hot → warm → cold). There are no
+/// per-family tables or layer hierarchies – rules are indexed by ID plus optional
+/// metadata such as layer strings.
 #[derive(Debug)]
 pub struct Bridge {
-    /// Map of family ID to table
-    tables: HashMap<RuleFamilyId, Arc<RwLock<RuleFamilyTable>>>,
-    ///Global bridge version (Increments on any table modifications)
     active_version: Arc<RwLock<u64>>,
-    ///Optional staged version for atomic hot reload
     staged_version: Arc<RwLock<Option<u64>>>,
-    ///Creation timestamp
     created_at: u64,
-    /// Pre-encoded anchors for installed rules
-    rule_anchors: Arc<RwLock<HashMap<String, RuleVector>>>,
+    /// Hot cache: in-memory LRU cache for rule vectors
+    pub hot_cache: Arc<HotCache>,
+    /// Warm storage: memory-mapped file for persistent cache
+    pub warm_storage: Arc<WarmStorage>,
+    /// Cold storage: SQLite database for overflow
+    pub cold_storage: Arc<ColdStorage>,
+    /// In-memory index of installed rules for metadata lookups
+    rule_index: Arc<RwLock<HashMap<String, Arc<dyn RuleInstance>>>>,
 }
 
 impl Bridge {
-    ///Initializes a new Bridge with empty tables for all rule families.
-    /// Each table is created with deafult settings and no rules.
-    /// Tables can be populated later through the add_rule method or hot-reload
-    /// options.
-    ///
-    pub fn init() -> Self {
-        let families = RuleFamilyId::all();
-        let mut tables = HashMap::new();
+    /// Initializes a new Bridge with default storage configuration.
+    pub fn init() -> Result<Self, String> {
+        Self::new(StorageConfig::default())
+    }
 
-        //Create one table per family
-        for family in families {
-            let layer = family.layer();
-            let table = RuleFamilyTable::new(family.clone(), layer);
+    /// Creates a new Bridge with the specified storage configuration.
+    pub fn new(storage_config: StorageConfig) -> Result<Self, String> {
+        let hot_cache = Arc::new(HotCache::new());
+        let warm_storage = Arc::new(WarmStorage::open(&storage_config.warm_storage_path)?);
+        let cold_storage = Arc::new(ColdStorage::open(&storage_config.cold_storage_path)?);
 
-            tables.insert(family.clone(), Arc::new(RwLock::new(table)));
+        // Load warm storage into hot cache on startup for fast access
+        let warm_anchors = warm_storage.load_anchors()?;
+        for (rule_id, anchors) in warm_anchors {
+            hot_cache.insert(rule_id, anchors)?;
         }
-        Bridge {
-            tables,
+
+        let mut rule_index: HashMap<String, Arc<dyn RuleInstance>> = HashMap::new();
+        for metadata in cold_storage.list_metadata()? {
+            let rule_id = metadata.rule_id.clone();
+            let rule: Arc<dyn RuleInstance> = Arc::new(DesignBoundaryRule::new(
+                rule_id.clone(),
+                metadata.priority,
+                metadata.scope,
+                metadata.layer,
+                metadata.created_at_ms,
+                metadata.enabled,
+                metadata.description,
+                metadata.params,
+            ));
+            rule_index.insert(rule_id, rule);
+        }
+
+        Ok(Bridge {
             active_version: Arc::new(RwLock::new(0)),
             staged_version: Arc::new(RwLock::new(None)),
             created_at: now_ms(),
-            rule_anchors: Arc::new(RwLock::new(HashMap::new())),
-        }
+            hot_cache,
+            warm_storage,
+            cold_storage,
+            rule_index: Arc::new(RwLock::new(rule_index)),
+        })
+    }
+
+    /// Creates a Bridge with default storage paths.
+    pub fn with_defaults() -> Result<Self, String> {
+        Self::new(StorageConfig::default())
     }
 
     // ============================================================================================
@@ -78,7 +108,6 @@ impl Bridge {
     // ============================================================================================
 
     /// Returns the current global version
-
     pub fn version(&self) -> u64 {
         *self.active_version.read()
     }
@@ -93,187 +122,100 @@ impl Bridge {
         self.created_at
     }
 
-    /// Returns the number of tables in the bridge
-    pub fn table_count(&self) -> usize {
-        self.tables.len()
+    /// Returns the number of installed rules
+    pub fn rule_count(&self) -> usize {
+        self.rule_index.read().len()
     }
 
-    /// Returns a list of all family IDs in the bridge
-    pub fn family_ids(&self) -> Vec<RuleFamilyId> {
-        self.tables.keys().cloned().collect()
+    /// Returns a clone of all installed rule instances.
+    pub fn all_rules(&self) -> Vec<Arc<dyn RuleInstance>> {
+        self.rule_index.read().values().cloned().collect()
     }
 
-    // ============================================================================================
-    // TABLE ACCESS
-    // ============================================================================================
-
-    /// Gets a reference to a specific table by family ID
-
-    pub fn get_table(&self, family_id: &RuleFamilyId) -> Option<Arc<RwLock<RuleFamilyTable>>> {
-        self.tables.get(family_id).map(Arc::clone)
-    }
-
-    /// Gets all tables for a specific layer
-    pub fn get_tables_by_layer(
-        &self,
-        layer_id: &LayerId,
-    ) -> Vec<(RuleFamilyId, Arc<RwLock<RuleFamilyTable>>)> {
-        self.tables
-            .iter()
-            .filter(|(fam_id, _)| fam_id.layer() == *layer_id)
-            .map(|(fam_id, table)| (fam_id.clone(), Arc::clone(table)))
-            .collect()
+    /// Returns a specific rule by ID if present.
+    pub fn get_rule(&self, rule_id: &str) -> Option<Arc<dyn RuleInstance>> {
+        self.rule_index.read().get(rule_id).cloned()
     }
 
     // ============================================================================================
-    // RULE OPERATIONS (CONVENIENCE WRAPPERS)
+    // RULE OPERATIONS
     // ============================================================================================
 
-    /// Adds a rule to the appropriate table based on its family
-    ///
-    /// This is a convenience wrapper that automatically routes the rule
-    /// to the correct table based on the rule's family_id().
-
-    pub fn add_rule(&self, rule: Arc<dyn RuleInstance>) -> Result<(), String> {
-        let family_id = rule.family_id();
-        match self.get_table(&family_id) {
-            Some(table) => {
-                let result = table.write().add_rule(rule);
-                if result.is_ok() {
-                    self.increment_version();
-                }
-                result
-            }
-            None => Err(format!("Table for family {} not found", family_id)),
-        }
-    }
-
-    /// Adds a rule and stores its pre-encoded anchors
+    /// Adds a rule and stores its pre-encoded anchors with tiered persistence.
     pub fn add_rule_with_anchors(
         &self,
         rule: Arc<dyn RuleInstance>,
         anchors: RuleVector,
     ) -> Result<(), String> {
-        let family_id = rule.family_id();
+        let rule_id = rule.rule_id().to_string();
 
-        match self.get_table(&family_id) {
-            Some(table) => {
-                table.write().add_rule(Arc::clone(&rule))?;
-                self.rule_anchors
-                    .write()
-                    .insert(rule.rule_id().to_string(), anchors);
-                self.increment_version();
-                Ok(())
-            }
-            None => Err(format!("Table for family {} not found", family_id)),
-        }
-    }
+        self.hot_cache.insert(rule_id.clone(), anchors.clone())?;
+        self.warm_storage
+            .write_anchors(self.hot_cache.snapshot())
+            .map_err(|e| format!("Warm storage sync failed: {}", e))?;
+        self.cold_storage
+            .upsert(&rule_id, &anchors)
+            .map_err(|e| format!("Cold storage upsert failed: {}", e))?;
+        let metadata = RuleMetadata::from_rule(rule.as_ref());
+        self.cold_storage
+            .upsert_metadata(&metadata)
+            .map_err(|e| format!("Cold storage metadata upsert failed: {}", e))?;
 
-    /// Get anchors for a rule that was installed
-    pub fn get_rule_anchors(&self, rule_id: &str) -> Option<RuleVector> {
-        self.rule_anchors.read().get(rule_id).cloned()
-    }
-
-    /// Add multiple rules in a batch (more efficient than individual adds)
-    pub fn add_rules_batch(&self, rules: Vec<Arc<dyn RuleInstance>>) -> Result<(), String> {
-        if rules.is_empty() {
-            return Ok(());
-        }
-
-        // Group rules by family
-        let mut by_family: HashMap<RuleFamilyId, Vec<Arc<dyn RuleInstance>>> = HashMap::new();
-
-        for rule in rules {
-            by_family
-                .entry(rule.family_id())
-                .or_insert_with(Vec::new)
-                .push(rule);
-        }
-
-        // Add rules to each table
-        for (family_id, family_rules) in by_family {
-            match self.get_table(&family_id) {
-                Some(table) => {
-                    table.write().add_rules_batch(family_rules)?;
-                }
-                None => {
-                    return Err(format!("Table for family {} not found", family_id));
-                }
-            }
-        }
-
+        self.rule_index.write().insert(rule_id, Arc::clone(&rule));
         self.increment_version();
+
         Ok(())
     }
 
-    // Removes a rule from the appropriate table
-    pub fn remove_rule(&self, family_id: &RuleFamilyId, rule_id: &str) -> Result<bool, String> {
-        match self.get_table(family_id) {
-            Some(table) => {
-                let result = table.write().remove_rule(rule_id);
-                if result.is_ok() && result.as_ref().unwrap() == &true {
-                    self.increment_version();
-                }
-                result
-            }
-            None => Err(format!("Table for family {} not found", family_id)),
+    /// Removes a rule by ID. Returns true if the rule was present.
+    pub fn remove_rule(&self, rule_id: &str) -> Result<bool, String> {
+        let removed = self.rule_index.write().remove(rule_id).is_some();
+        if !removed {
+            return Ok(false);
         }
+
+        self.hot_cache.remove(rule_id);
+        self.warm_storage
+            .write_anchors(self.hot_cache.snapshot())
+            .map_err(|e| format!("Warm storage sync failed: {}", e))?;
+        self.cold_storage
+            .remove(rule_id)
+            .map_err(|e| format!("Cold storage removal failed: {}", e))?;
+        self.cold_storage
+            .remove_metadata(rule_id)
+            .map_err(|e| format!("Cold storage metadata removal failed: {}", e))?;
+        self.increment_version();
+        Ok(true)
     }
 
-    /// Clears all rules from a specific table
-    pub fn clear_table(&self, family_id: &RuleFamilyId) -> Result<(), String> {
-        match self.get_table(family_id) {
-            Some(table) => {
-                table.write().clear();
-                self.increment_version();
-                Ok(())
-            }
-            None => Err(format!("Table for family {} not found", family_id)),
-        }
-    }
-
-    /// Clears all rules from all tables
+    /// Clears all rules and tiered storage state.
     pub fn clear_all(&self) {
-        for table in self.tables.values() {
-            table.write().clear();
-        }
+        self.rule_index.write().clear();
+        self.hot_cache.clear();
+        let _ = self
+            .warm_storage
+            .write_anchors(HashMap::<String, RuleVector>::new());
+        let _ = self.cold_storage.clear();
+        let _ = self.cold_storage.clear_metadata();
         self.increment_version();
     }
 
-    // ============================================================================================
-    // QUERY OPERATIONS
-    // ============================================================================================
-
-    /// Queries rules from a specific table by agent ID
-    pub fn query_by_agent(
-        &self,
-        family_id: &RuleFamilyId,
-        agent_id: &str,
-    ) -> Result<Vec<Arc<dyn RuleInstance>>, String> {
-        match self.get_table(family_id) {
-            Some(table) => Ok(table.read().query_by_secondary(agent_id)),
-            None => Err(format!("Table for family {} not found", family_id)),
+    /// Get rule anchors with tiered lookup and automatic promotion.
+    pub fn get_rule_anchors(&self, rule_id: &str) -> Option<RuleVector> {
+        if let Some(anchors) = self.hot_cache.get(rule_id) {
+            return Some(anchors);
         }
-    }
 
-    /// Queries global rules from a specific table
-    pub fn query_global(
-        &self,
-        family_id: &RuleFamilyId,
-    ) -> Result<Vec<Arc<dyn RuleInstance>>, String> {
-        match self.get_table(family_id) {
-            Some(table) => Ok(table.read().query_globals()),
-            None => Err(format!("Table for family {} not found", family_id)),
+        if let Ok(Some(anchors)) = self.warm_storage.get(rule_id) {
+            let _ = self.hot_cache.insert(rule_id.to_string(), anchors.clone());
+            return Some(anchors);
         }
-    }
 
-    /// Finds a specific rule across all tables
-    pub fn find_rule(&self, rule_id: &str) -> Option<Arc<dyn RuleInstance>> {
-        for table in self.tables.values() {
-            if let Some(rule) = table.read().find_rule(rule_id) {
-                return Some(rule);
-            }
+        if let Ok(Some(anchors)) = self.cold_storage.get(rule_id) {
+            let _ = self.hot_cache.insert(rule_id.to_string(), anchors.clone());
+            return Some(anchors);
         }
+
         None
     }
 
@@ -283,53 +225,28 @@ impl Bridge {
 
     /// Returns statistics about the bridge
     pub fn stats(&self) -> BridgeStats {
-        let mut total_rules = 0;
-        let mut total_global_rules = 0;
-        let mut total_scoped_rules = 0;
-        let mut tables_with_rules = 0;
-
-        for table in self.tables.values() {
-            let meta = table.read().metadata();
-            total_rules += meta.rule_count;
-            total_global_rules += meta.global_count;
-            total_scoped_rules += meta.scoped_count;
-
-            if meta.rule_count > 0 {
-                tables_with_rules += 1;
-            }
-        }
+        let index = self.rule_index.read();
+        let total_rules = index.len();
+        let global_rules = index.values().filter(|rule| rule.scope().is_global).count();
 
         BridgeStats {
             version: self.version(),
-            total_tables: self.tables.len(),
-            tables_with_rules,
             total_rules,
-            total_global_rules,
-            total_scoped_rules,
+            global_rules,
+            scoped_rules: total_rules.saturating_sub(global_rules),
             created_at: self.created_at,
         }
     }
 
-    /// Returns per-table statistics
-    pub fn table_stats(&self) -> Vec<TableStats> {
-        let mut stats = Vec::new();
+    /// Returns storage statistics across all tiers.
+    pub fn storage_stats(&self) -> StorageStats {
+        let hot_stats = self.hot_cache.stats();
 
-        for (family_id, table) in &self.tables {
-            let table_guard = table.read();
-            let meta = table_guard.metadata();
-
-            stats.push(TableStats {
-                family_id: family_id.clone(),
-                layer_id: table_guard.layer_id().clone(),
-                version: table_guard.version(),
-                rule_count: meta.rule_count,
-                global_count: meta.global_count,
-                scoped_count: meta.scoped_count,
-            });
+        StorageStats {
+            hot_rules: hot_stats.entries,
+            evictions: hot_stats.total_evictions,
+            ..Default::default()
         }
-
-        stats.sort_by_key(|s| s.layer_id.layer_num());
-        stats
     }
 
     // ============================================================================================
@@ -375,44 +292,104 @@ impl Bridge {
 pub struct BridgeStats {
     /// Current bridge version
     pub version: u64,
-
-    /// Total number of tables
-    pub total_tables: usize,
-
-    /// Number of tables with at least one rule
-    pub tables_with_rules: usize,
-
-    /// Total rules across all tables
+    /// Total rules stored in tiered storage
     pub total_rules: usize,
-
-    /// Total global rules
-    pub total_global_rules: usize,
-
-    /// Total scoped rules
-    pub total_scoped_rules: usize,
-
+    /// Number of global rules (scope.is_global)
+    pub global_rules: usize,
+    /// Number of scoped rules (total - global)
+    pub scoped_rules: usize,
     /// Bridge creation timestamp
     pub created_at: u64,
 }
 
-/// Per-table statistics
-#[derive(Debug, Clone)]
-pub struct TableStats {
-    /// Rule family ID
-    pub family_id: RuleFamilyId,
+// ================================================================================================
+// TESTS
+// ================================================================================================
 
-    /// Parent layer
-    pub layer_id: LayerId,
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    /// Table version
-    pub version: u64,
+    fn create_test_bridge() -> Result<Bridge, String> {
+        let tmp_dir = tempfile::tempdir().map_err(|e| e.to_string())?;
+        let warm_path = tmp_dir.path().join("warm.bin");
+        let cold_path = tmp_dir.path().join("cold.db");
 
-    /// Number of rules
-    pub rule_count: usize,
+        let config = StorageConfig {
+            warm_storage_path: warm_path,
+            cold_storage_path: cold_path,
+        };
 
-    /// Number of global rules
-    pub global_count: usize,
+        Bridge::new(config)
+    }
 
-    /// Number of scoped rules
-    pub scoped_count: usize,
+    #[test]
+    fn test_bridge_init_with_storage() -> Result<(), String> {
+        let bridge = create_test_bridge()?;
+
+        assert_eq!(bridge.rule_count(), 0);
+
+        let storage_stats = bridge.storage_stats();
+        assert_eq!(storage_stats.hot_rules, 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_hot_cache_lookup_empty() -> Result<(), String> {
+        let bridge = create_test_bridge()?;
+
+        let result = bridge.get_rule_anchors("non-existent-rule");
+        assert!(result.is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_warm_storage_reload_on_startup() -> Result<(), String> {
+        let tmp_dir = tempfile::tempdir().map_err(|e| e.to_string())?;
+        let warm_path = tmp_dir.path().join("warm.bin");
+        let cold_path = tmp_dir.path().join("cold.db");
+
+        {
+            let config = StorageConfig {
+                warm_storage_path: warm_path.clone(),
+                cold_storage_path: cold_path.clone(),
+            };
+            let bridge = Bridge::new(config)?;
+            let stats = bridge.storage_stats();
+            assert_eq!(stats.hot_rules, 0);
+        }
+
+        {
+            let config = StorageConfig {
+                warm_storage_path: warm_path,
+                cold_storage_path: cold_path,
+            };
+            let bridge = Bridge::new(config)?;
+            let stats = bridge.storage_stats();
+            assert_eq!(stats.hot_rules, 0);
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_storage_config_defaults() {
+        let config = StorageConfig::default();
+        assert_eq!(
+            config.warm_storage_path,
+            PathBuf::from("./var/data/warm_storage.bin")
+        );
+        assert_eq!(
+            config.cold_storage_path,
+            PathBuf::from("./var/data/cold_storage.db")
+        );
+    }
+
+    #[test]
+    fn test_bridge_init_defaults() {
+        let bridge = Bridge::with_defaults();
+        assert!(bridge.is_ok());
+    }
 }

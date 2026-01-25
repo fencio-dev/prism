@@ -3,8 +3,8 @@
 //! Atomic, rotation-capable writer for enforcement session logs.
 //! Analogous to syslog for enforcement decisions.
 
-use super::session::EnforcementSession;
 use super::recorder::TelemetryConfig;
+use super::session::EnforcementSession;
 use parking_lot::Mutex;
 use rusqlite::{params, Connection};
 use std::fs::{self, File, OpenOptions};
@@ -251,7 +251,8 @@ impl HitlogWriter {
             }
             RotationPolicy::Daily => {
                 // Check if day has changed
-                let created_day = file.created_at
+                let created_day = file
+                    .created_at
                     .duration_since(UNIX_EPOCH)
                     .unwrap()
                     .as_secs()
@@ -264,7 +265,8 @@ impl HitlogWriter {
                 current_day > created_day
             }
             RotationPolicy::Hourly => {
-                let created_hour = file.created_at
+                let created_hour = file
+                    .created_at
                     .duration_since(UNIX_EPOCH)
                     .unwrap()
                     .as_secs()
@@ -358,8 +360,8 @@ impl HitlogWriter {
         use flate2::write::GzEncoder;
         use flate2::Compression;
 
-        let input = fs::read(path)
-            .map_err(|e| format!("Failed to read file for compression: {}", e))?;
+        let input =
+            fs::read(path).map_err(|e| format!("Failed to read file for compression: {}", e))?;
 
         let output_path = path.with_extension("hitlog.gz");
         let output_file = File::create(&output_path)

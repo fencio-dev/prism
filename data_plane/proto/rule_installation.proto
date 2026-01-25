@@ -21,6 +21,9 @@ service DataPlane {
 
   // Get full details for a specific session
   rpc GetSession(GetSessionRequest) returns (GetSessionResponse);
+
+  // Trigger rule refresh from warm storage
+  rpc RefreshRules(RefreshRulesRequest) returns (RefreshRulesResponse);
 }
 
 // Request to install rules
@@ -191,4 +194,17 @@ message GetSessionRequest {
 // Response with full session details
 message GetSessionResponse {
   string session_json = 1;  // Full EnforcementSession as JSON
+}
+
+// Request to refresh rules from warm storage
+message RefreshRulesRequest {
+  // Empty - triggers full refresh from warm storage
+}
+
+// Response from refresh operation
+message RefreshRulesResponse {
+  bool success = 1;
+  string message = 2;
+  int32 rules_refreshed = 3;
+  int64 duration_ms = 4;
 }

@@ -151,8 +151,16 @@ fn main() -> Result<(), String> {
 
             println!("📊 Hitlog Statistics\n");
             println!("Total Sessions:  {}", stats.total_sessions);
-            println!("Blocked:         {} ({:.1}%)", stats.blocked, stats.block_rate * 100.0);
-            println!("Allowed:         {} ({:.1}%)", stats.allowed, (1.0 - stats.block_rate) * 100.0);
+            println!(
+                "Blocked:         {} ({:.1}%)",
+                stats.blocked,
+                stats.block_rate * 100.0
+            );
+            println!(
+                "Allowed:         {} ({:.1}%)",
+                stats.allowed,
+                (1.0 - stats.block_rate) * 100.0
+            );
             println!("Avg Duration:    {} μs", stats.avg_duration_us);
             println!("Avg Rules/Session: {:.1}", stats.avg_rules_per_session);
         }
@@ -184,14 +192,21 @@ fn main() -> Result<(), String> {
 
             match format.as_str() {
                 "json" => {
-                    println!("{}", serde_json::to_string_pretty(&result.sessions).unwrap());
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&result.sessions).unwrap()
+                    );
                 }
                 "summary" => {
                     for session in &result.sessions {
                         println!(
                             "{} | {} | {} | {} rules | {} μs",
                             session.session_id,
-                            if session.final_decision == 0 { "BLOCK" } else { "ALLOW" },
+                            if session.final_decision == 0 {
+                                "BLOCK"
+                            } else {
+                                "ALLOW"
+                            },
                             session.layer,
                             session.rules_evaluated.len(),
                             session.duration_us
@@ -211,8 +226,16 @@ fn main() -> Result<(), String> {
 }
 
 fn print_session_summary(session: &tupl_dp::telemetry::session::EnforcementSession) {
-    let decision_icon = if session.final_decision == 0 { "🚫" } else { "✅" };
-    let decision_text = if session.final_decision == 0 { "BLOCK" } else { "ALLOW" };
+    let decision_icon = if session.final_decision == 0 {
+        "🚫"
+    } else {
+        "✅"
+    };
+    let decision_text = if session.final_decision == 0 {
+        "BLOCK"
+    } else {
+        "ALLOW"
+    };
 
     println!(
         "{} {} | {} | {} | {} rules | {} μs",
@@ -226,11 +249,7 @@ fn print_session_summary(session: &tupl_dp::telemetry::session::EnforcementSessi
 
     // Show which rule caused the block
     if session.final_decision == 0 {
-        if let Some(blocking_rule) = session
-            .rules_evaluated
-            .iter()
-            .find(|r| r.decision == 0)
-        {
+        if let Some(blocking_rule) = session.rules_evaluated.iter().find(|r| r.decision == 0) {
             println!(
                 "   ↳ Blocked by: {} ({})",
                 blocking_rule.rule_id, blocking_rule.rule_family
@@ -251,7 +270,11 @@ fn print_session_detail(session: &tupl_dp::telemetry::session::EnforcementSessio
     println!("Layer:       {}", session.layer);
     println!(
         "Decision:    {} {}",
-        if session.final_decision == 0 { "🚫 BLOCK" } else { "✅ ALLOW" },
+        if session.final_decision == 0 {
+            "🚫 BLOCK"
+        } else {
+            "✅ ALLOW"
+        },
         if session.final_decision == 0 { "" } else { "" }
     );
     println!("Duration:    {} μs", session.duration_us);
@@ -271,7 +294,11 @@ fn print_session_detail(session: &tupl_dp::telemetry::session::EnforcementSessio
     println!("───────────────────────────────────────────────────────────\n");
 
     for (i, rule_eval) in session.rules_evaluated.iter().enumerate() {
-        let decision_icon = if rule_eval.decision == 0 { "🚫" } else { "✅" };
+        let decision_icon = if rule_eval.decision == 0 {
+            "🚫"
+        } else {
+            "✅"
+        };
 
         println!(
             "{}. {} {} (priority: {})",
@@ -308,14 +335,25 @@ fn print_session_detail(session: &tupl_dp::telemetry::session::EnforcementSessio
     println!("Performance");
     println!("───────────────────────────────────────────────────────────\n");
 
-    println!("Encoding:     {} μs", session.performance.encoding_duration_us);
-    println!("Rule Query:   {} μs", session.performance.rule_query_duration_us);
-    println!("Evaluation:   {} μs", session.performance.evaluation_duration_us);
+    println!(
+        "Encoding:     {} μs",
+        session.performance.encoding_duration_us
+    );
+    println!(
+        "Rule Query:   {} μs",
+        session.performance.rule_query_duration_us
+    );
+    println!(
+        "Evaluation:   {} μs",
+        session.performance.evaluation_duration_us
+    );
     println!("Total:        {} μs", session.performance.total_duration_us);
 
     if session.performance.short_circuited {
-        println!("Short-circuit: YES (saved {} rule evaluations)",
-            session.performance.rules_queried - session.performance.rules_evaluated);
+        println!(
+            "Short-circuit: YES (saved {} rule evaluations)",
+            session.performance.rules_queried - session.performance.rules_evaluated
+        );
     }
 
     println!("\n═══════════════════════════════════════════════════════════\n");

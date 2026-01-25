@@ -3,10 +3,10 @@
 //! Query and analyze enforcement sessions from hitlog files.
 
 use super::session::EnforcementSession;
+use rusqlite::{params_from_iter, Connection};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use rusqlite::{Connection, params, params_from_iter};
 
 /// Query filter for searching hitlogs
 #[derive(Debug, Clone, Default)]
@@ -245,7 +245,11 @@ impl HitlogQuery {
     }
 
     /// Get sessions for a specific agent
-    pub fn by_agent(&self, agent_id: String, limit: Option<usize>) -> Result<Vec<EnforcementSession>, String> {
+    pub fn by_agent(
+        &self,
+        agent_id: String,
+        limit: Option<usize>,
+    ) -> Result<Vec<EnforcementSession>, String> {
         let filter = QueryFilter {
             agent_id: Some(agent_id),
             limit,
@@ -388,11 +392,7 @@ impl HitlogQuery {
             .filter(|s| s.final_decision == 1)
             .count();
 
-        let total_duration_us: u64 = all_sessions
-            .sessions
-            .iter()
-            .map(|s| s.duration_us)
-            .sum();
+        let total_duration_us: u64 = all_sessions.sessions.iter().map(|s| s.duration_us).sum();
         let avg_duration_us = if total_sessions > 0 {
             total_duration_us / total_sessions as u64
         } else {

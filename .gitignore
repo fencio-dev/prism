@@ -101,6 +101,7 @@ Desktop.ini
 # Logs
 *.log
 logs/
+data/logs/
 *.log.*
 
 # ML Models & Embeddings Cache
@@ -115,7 +116,8 @@ models/
 /tupl_sdk/.cache/
 
 # Claude Code and Gemini (personal AI assistant files)
-.claude/
+# Note: .claude/ contains skills and agent configurations
+# But we want to track the seed-generator skill, so exclude only the data
 .gemini/
 GEMINI.md
 client_secret_*.json
@@ -172,7 +174,13 @@ celerybeat.pid
 generated/
 workspace/
 .gemini
-.claude
 .codex
 .gemini-clipboard
 .uv_cache
+
+AGENTS.md
+.opencode
+
+# Seed dataset (generated training data - not version controlled)
+data/seed/
+data/seed/**/*.jsonl

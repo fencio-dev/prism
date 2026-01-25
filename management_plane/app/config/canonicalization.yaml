@@ -1,0 +1,120 @@
+version: "1.0"
+metadata:
+  description: "Canonical vocabulary mappings for BERT-based canonicalization"
+  last_updated: "2025-01-25"
+  bert_model: "canonicalizer_tinybert_v1.0"
+
+# Canonical terms that the BERT model should classify into
+canonical_vocabulary:
+  actions:
+    read:
+      synonyms: [search, query, get, fetch, list, find, select, retrieve, view, look_up]
+      description: "Read operations without side effects"
+    write:
+      synonyms: [create, update, insert, modify, set, upsert, change, put, add, append]
+      description: "Write operations that modify state"
+    delete:
+      synonyms: [delete, remove, drop, destroy, purge, clear, unset, erase]
+      description: "Deletion operations"
+    update:
+      synonyms: [update, patch, modify, change, edit, revise]
+      description: "Update/patch operations"
+    execute:
+      synonyms: [execute, run, call, invoke, perform, trigger, action]
+      description: "Generic execution"
+    export:
+      synonyms: [export, download, dump, backup, extract, save, download]
+      description: "Export or extraction operations"
+
+  resource_types:
+    database:
+      synonyms: [database, db, sql, nosql, postgres, mysql, mongodb, table, collection, query, schema]
+      description: "Database resources"
+    storage:
+      synonyms: [storage, s3, bucket, blob, file_store, data_lake, warehouse]
+      description: "Storage/object storage resources"
+    api:
+      synonyms: [api, endpoint, service, http, rest, graphql, gateway, webhook, rpc]
+      description: "API or service resources"
+    queue:
+      synonyms: [queue, kafka, rabbitmq, pubsub, message, stream, topic, event]
+      description: "Message queue/streaming resources"
+    cache:
+      synonyms: [cache, redis, memcached, in_memory, store, kv]
+      description: "Cache/KV store resources"
+
+  sensitivity_levels:
+    public:
+      synonyms: [public, open, unrestricted, unclassified]
+      description: "Publicly accessible data"
+    internal:
+      synonyms: [internal, private, restricted, confidential, secret, classified]
+      description: "Internal-only or restricted data"
+    secret:
+      synonyms: [secret, top_secret, classified, restricted, sensitive]
+      description: "Highly classified data"
+
+# Extraction rules for different field contexts
+extraction_rules:
+  action_field:
+    instructions: "Map free-form action terms to canonical actions"
+    fallback_action: "execute"
+    
+  resource_type_field:
+    instructions: "Map free-form resource terms to canonical resource types"
+    fallback_resource: "api"
+    
+  sensitivity_field:
+    instructions: "Map free-form sensitivity terms to canonical levels"
+    fallback_sensitivity: "internal"
+
+# Confidence thresholds for canonicalization
+confidence_thresholds:
+  high: 0.9    # High confidence: use canonical term directly
+  medium: 0.7  # Medium confidence: log prediction, use canonical term
+  low: 0.0     # Low confidence: passthrough original term unchanged
+
+# Passthrough behavior for unknown terms
+passthrough_behavior:
+  enabled: true
+  log_as_warning: true
+  description: "Unknown terms pass through unchanged (not in canonical vocabulary) - logged for review"
+
+# Batch processing settings
+batch_processing:
+  max_batch_size: 100
+  timeout_ms: 5000
+
+# Label mappings for BERT model output classes
+label_maps:
+  action_labels:
+    - "read"
+    - "write"
+    - "update"
+    - "delete"
+    - "execute"
+    - "export"
+  
+  resource_type_labels:
+    - "database"
+    - "storage"
+    - "api"
+    - "queue"
+    - "cache"
+  
+  sensitivity_labels:
+    - "public"
+    - "internal"
+    - "secret"
+
+# Performance targets
+performance:
+  target_inference_latency_ms: 10
+  model_name: "TinyBERT"
+  model_size_mb: 0.48
+  
+logging:
+  enabled: true
+  log_dir: "/var/log/guard/canonicalization"
+  log_format: "jsonl"
+  retention_days: 90

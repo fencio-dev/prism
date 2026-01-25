@@ -3,7 +3,7 @@
 //! Tracks the complete lifecycle of a single intent evaluation.
 
 use serde::{Deserialize, Serialize};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Unique identifier for an enforcement session
 pub type SessionId = String;
@@ -66,9 +66,7 @@ pub enum SessionEvent {
     },
 
     /// Intent encoding started
-    EncodingStarted {
-        timestamp_us: u64,
-    },
+    EncodingStarted { timestamp_us: u64 },
 
     /// Intent encoding completed
     EncodingCompleted {
@@ -78,10 +76,7 @@ pub enum SessionEvent {
     },
 
     /// Intent encoding failed
-    EncodingFailed {
-        timestamp_us: u64,
-        error: String,
-    },
+    EncodingFailed { timestamp_us: u64, error: String },
 
     /// Rules queried from bridge
     RulesQueried {
@@ -92,10 +87,7 @@ pub enum SessionEvent {
     },
 
     /// No rules found (fail-closed)
-    NoRulesFound {
-        timestamp_us: u64,
-        layer: String,
-    },
+    NoRulesFound { timestamp_us: u64, layer: String },
 
     /// Rule evaluation started
     RuleEvaluationStarted {

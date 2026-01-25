@@ -6,6 +6,7 @@ Provides REST API for intent comparison, boundary management, and telemetry.
 """
 
 import logging
+import time
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
@@ -13,8 +14,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from .config import config
-from .endpoints import agents, auth, boundaries, encoding, enforcement, health, intents, telemetry
+from .settings import config
+from .endpoints import enforcement_v2, health
 
 # Configure logging
 logging.basicConfig(
@@ -44,29 +45,51 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         config.validate()
         logger.info("Configuration validated successfully")
 
-        # Initialize FFI bridge (will load Rust library)
-        from .ffi_bridge import get_sandbox
-
-        sandbox = get_sandbox()
-        if sandbox.health_check():
-            logger.info("Rust library initialized and healthy")
-        else:
-            logger.warning("Rust library health check failed")
-
-        # Seed a default test boundary for E2E tests if none exist
-        try:
-            from .endpoints.boundaries import _boundaries_store  # in-memory demo store
-            from .endpoints.intents import _get_test_boundary
-
-            if not _boundaries_store:
-                test_boundary = _get_test_boundary()
-                _boundaries_store[test_boundary.id] = test_boundary
-                logger.info(
-                    "Seeded default test boundary '%s' for E2E tests",
-                    test_boundary.id,
+        # Initialize canonicalization services if enabled
+        if config.CANONICALIZATION_ENABLED:
+            try:
+                from .endpoints.enforcement_v2 import (
+                    get_canonicalizer,
+                    get_intent_encoder,
+                    get_policy_encoder,
+                    get_canonicalization_logger,
                 )
-        except Exception as se:
-            logger.warning("Boundary seeding skipped: %s", se)
+
+                logger.info("Initializing canonicalization services...")
+
+                # Load canonicalizer
+                start_time = time.time()
+                canonicalizer = get_canonicalizer()
+                if canonicalizer:
+                    canon_time = (time.time() - start_time) * 1000
+                    logger.info(f"BERT canonicalizer loaded in {canon_time:.1f}ms")
+                else:
+                    logger.warning("BERT canonicalizer not available")
+
+                # Load intent encoder
+                intent_encoder = get_intent_encoder()
+                if intent_encoder:
+                    logger.info("Intent encoder initialized")
+                else:
+                    logger.warning("Intent encoder not available")
+
+                # Load policy encoder
+                policy_encoder = get_policy_encoder()
+                if policy_encoder:
+                    logger.info("Policy encoder initialized")
+                else:
+                    logger.warning("Policy encoder not available")
+
+                # Initialize logger
+                canon_logger = get_canonicalization_logger()
+                if canon_logger:
+                    await canon_logger.start()
+                    logger.info(f"Canonicalization logger started: {canon_logger.log_dir}")
+                else:
+                    logger.warning("Canonicalization logger not available")
+
+            except Exception as e:
+                logger.warning(f"Canonicalization services initialization warning: {e}")
 
     except Exception as e:
         logger.error(f"Startup validation failed: {e}", exc_info=True)
@@ -78,6 +101,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Shutdown
     logger.info("Shutting down Management Plane")
+
+    # Cleanup canonicalization logger
+    if config.CANONICALIZATION_ENABLED:
+        try:
+            from .endpoints.enforcement_v2 import get_canonicalization_logger
+
+            canon_logger = get_canonicalization_logger()
+            if canon_logger:
+                await canon_logger.stop()
+                logger.info("Canonicalization logger stopped")
+        except Exception as e:
+            logger.warning(f"Error stopping canonicalization logger: {e}")
 
 
 # Create FastAPI application
@@ -99,13 +134,7 @@ app.add_middleware(
 
 # Register routers
 app.include_router(health.router)
-app.include_router(auth.router, prefix=config.API_V1_PREFIX)  # Token validation for gRPC proxy
-app.include_router(intents.router, prefix=config.API_V1_PREFIX)
-app.include_router(boundaries.router, prefix=config.API_V1_PREFIX)
-app.include_router(telemetry.router, prefix=config.API_V1_PREFIX)
-app.include_router(encoding.router, prefix=config.API_V1_PREFIX)  # NEW v1.3: Encoding endpoints
-app.include_router(agents.router, prefix=config.API_V1_PREFIX)  # NEW v1.0: Agent policies
-app.include_router(enforcement.router, prefix=config.API_V1_PREFIX)
+app.include_router(enforcement_v2.router, prefix=config.API_V2_PREFIX)  # NEW v2: Canonicalization + Enforcement
 
 
 # Global exception handler

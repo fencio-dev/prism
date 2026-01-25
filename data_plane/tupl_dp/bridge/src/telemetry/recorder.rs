@@ -3,7 +3,7 @@
 //! Thread-safe telemetry collection and session management.
 
 use super::session::{EnforcementSession, SessionId};
-use super::writer::{HitlogWriter, HitlogConfig};
+use super::writer::{HitlogConfig, HitlogWriter};
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -87,11 +87,7 @@ impl TelemetryRecorder {
     }
 
     /// Start a new enforcement session
-    pub fn start_session(
-        &self,
-        layer: String,
-        intent_json: String,
-    ) -> Option<SessionId> {
+    pub fn start_session(&self, layer: String, intent_json: String) -> Option<SessionId> {
         if !self.config.enabled {
             return None;
         }
@@ -109,14 +105,12 @@ impl TelemetryRecorder {
         let session_id = Uuid::new_v4().to_string();
 
         // Create session
-        let session = EnforcementSession::new(
-            session_id.clone(),
-            layer,
-            intent_json,
-        );
+        let session = EnforcementSession::new(session_id.clone(), layer, intent_json);
 
         // Store in active sessions
-        self.active_sessions.write().insert(session_id.clone(), session);
+        self.active_sessions
+            .write()
+            .insert(session_id.clone(), session);
 
         // Increment counter
         *self.total_sessions.write() += 1;

@@ -8,37 +8,29 @@
 
 use crate::bridge::Bridge;
 use crate::enforcement_engine::EnforcementEngine;
-use crate::rule_converter::{ControlPlaneRule, ParamValue, RuleConverter};
+use crate::families::DesignBoundaryRule;
+use crate::refresh::{RefreshScheduler, RefreshService, SchedulerConfig};
+use crate::rule_converter::{ControlPlaneRule, ParamValue};
 use crate::rule_vector::{convert_anchor_block, RuleVector};
-use crate::types::{RuleFamilyId, RuleInstance};
-use reqwest::Client;
-use serde::Deserialize;
+use crate::types::{RuleInstance, RuleScope};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::sync::Arc;
-use std::time::Duration;
 use tonic::{transport::Server, Request, Response, Status};
 
-#[derive(Debug, Deserialize)]
-struct RuleAnchorsResponse {
-    action_anchors: Vec<Vec<f32>>,
-    action_count: usize,
-    resource_anchors: Vec<Vec<f32>>,
-    resource_count: usize,
-    data_anchors: Vec<Vec<f32>>,
-    data_count: usize,
-    risk_anchors: Vec<Vec<f32>>,
-    risk_count: usize,
-}
-
-fn convert_proto_rule_anchors(
-    payload: RuleAnchorsPayload,
-) -> Result<RuleVector, String> {
+fn convert_proto_rule_anchors(payload: RuleAnchorsPayload) -> Result<RuleVector, String> {
     fn convert_block(
         slot: &str,
         vectors: Vec<Vec<f32>>,
         count: i32,
-    ) -> Result<([[f32; crate::rule_vector::SLOT_WIDTH]; crate::rule_vector::MAX_ANCHORS_PER_SLOT], usize), String> {
+    ) -> Result<
+        (
+            [[f32; crate::rule_vector::SLOT_WIDTH]; crate::rule_vector::MAX_ANCHORS_PER_SLOT],
+            usize,
+        ),
+        String,
+    > {
         if count < 0 {
             return Err(format!("Slot '{}' has negative count {}", slot, count));
         }
@@ -62,7 +54,8 @@ fn convert_proto_rule_anchors(
     let risk_vecs: Vec<Vec<f32>> = risk_anchors.into_iter().map(|v| v.values).collect();
 
     let (action_block, action_count) = convert_block("action", action_vecs, action_count)?;
-    let (resource_block, resource_count) = convert_block("resource", resource_vecs, resource_count)?;
+    let (resource_block, resource_count) =
+        convert_block("resource", resource_vecs, resource_count)?;
     let (data_block, data_count) = convert_block("data", data_vecs, data_count)?;
     let (risk_block, risk_count) = convert_block("risk", risk_vecs, risk_count)?;
 
@@ -78,6 +71,28 @@ fn convert_proto_rule_anchors(
     })
 }
 
+fn param_value_to_json(value: &ParamValue) -> Value {
+    match value {
+        ParamValue::String(s) => Value::String(s.clone()),
+        ParamValue::Int(i) => Value::Number((*i).into()),
+        ParamValue::Float(f) => serde_json::Number::from_f64(*f)
+            .map(Value::Number)
+            .unwrap_or(Value::Null),
+        ParamValue::Bool(b) => Value::Bool(*b),
+        ParamValue::StringList(list) => {
+            Value::Array(list.iter().map(|item| Value::String(item.clone())).collect())
+        }
+    }
+}
+
+fn cp_params_to_value(params: &HashMap<String, ParamValue>) -> Value {
+    let mut map = serde_json::Map::with_capacity(params.len());
+    for (key, value) in params {
+        map.insert(key.clone(), param_value_to_json(value));
+    }
+    Value::Object(map)
+}
+
 // Include the generated protobuf code
 pub mod rule_installation {
     tonic::include_proto!("rule_installation");
@@ -87,8 +102,9 @@ use rule_installation::{
     data_plane_server::{DataPlane, DataPlaneServer},
     EnforceRequest, EnforceResponse, EnforcementSessionSummary, GetRuleStatsRequest,
     GetRuleStatsResponse, GetSessionRequest, GetSessionResponse, InstallRulesRequest,
-    InstallRulesResponse, QueryTelemetryRequest, QueryTelemetryResponse, RemoveAgentRulesRequest,
-    RemoveAgentRulesResponse, RuleAnchorsPayload, RuleEvidence, TableStats,
+    InstallRulesResponse, QueryTelemetryRequest, QueryTelemetryResponse, RefreshRulesRequest,
+    RefreshRulesResponse, RemoveAgentRulesRequest, RemoveAgentRulesResponse, RuleAnchorsPayload,
+    RuleEvidence,
 };
 
 // ================================================================================================
@@ -103,18 +119,12 @@ pub struct DataPlaneService {
     /// Enforcement engine for v1.3 layer-based enforcement
     enforcement_engine: Arc<EnforcementEngine>,
 
-    /// HTTP client for encoding rules
-    encoding_http_client: Client,
-
-    /// Base URL for the management plane
-    management_plane_url: String,
-
     /// Hitlog query engine for telemetry
     hitlog_query: Arc<crate::telemetry::query::HitlogQuery>,
-}
 
-const CONNECT_TIMEOUT_MS: u64 = 2_000;
-const REQUEST_TIMEOUT_MS: u64 = 30_000;
+    /// Service for rule refresh from warm storage
+    refresh_service: Arc<RefreshService>,
+}
 
 impl DataPlaneService {
     /// Create a new data plane service
@@ -122,12 +132,11 @@ impl DataPlaneService {
         let sanitized_url = management_plane_url.trim_end_matches('/').to_string();
 
         // Enable telemetry for enforcement tracking
-        use crate::telemetry::{TelemetryRecorder, TelemetryConfig};
-        let hitlog_dir = std::env::var("HITLOG_DIR")
-            .unwrap_or_else(|_| {
-                let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-                format!("{}/var/hitlogs", home)
-            });
+        use crate::telemetry::{TelemetryConfig, TelemetryRecorder};
+        let hitlog_dir = std::env::var("HITLOG_DIR").unwrap_or_else(|_| {
+            let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+            format!("{}/var/hitlogs", home)
+        });
 
         let telemetry_config = TelemetryConfig {
             hitlog_dir: hitlog_dir.clone(),
@@ -146,108 +155,20 @@ impl DataPlaneService {
             .expect("Failed to create enforcement engine with telemetry"),
         );
 
-        let encoding_http_client = Client::builder()
-            .connect_timeout(Duration::from_millis(CONNECT_TIMEOUT_MS))
-            .timeout(Duration::from_millis(REQUEST_TIMEOUT_MS))
-            .build()
-            .expect("Failed to build reqwest client for rule encoding");
-
         // Initialize hitlog query for telemetry (clone hitlog_dir as it was moved to telemetry)
         let hitlog_query = Arc::new(crate::telemetry::query::HitlogQuery::new(&hitlog_dir));
+
+        // Initialize refresh service for warm storage refresh
+        let refresh_service = Arc::new(RefreshService::new(Arc::clone(&bridge)));
 
         DataPlaneService {
             bridge,
             enforcement_engine,
-            encoding_http_client,
-            management_plane_url: sanitized_url,
             hitlog_query,
+            refresh_service,
         }
     }
 
-    fn encoding_endpoint(&self, path: &str) -> String {
-        let trimmed = path.trim_start_matches('/');
-        format!("{}/{}", self.management_plane_url, trimmed)
-    }
-
-    async fn encode_rule_during_installation(
-        &self,
-        rule: &Arc<dyn RuleInstance>,
-    ) -> Result<RuleVector, String> {
-        let endpoint = match rule.family_id() {
-            RuleFamilyId::ToolWhitelist => "/encode/rule/tool_whitelist",
-            RuleFamilyId::ToolParamConstraint => "/encode/rule/tool_param_constraint",
-            other => {
-                return Err(format!("Unsupported rule family {:?} for encoding", other));
-            }
-        };
-
-        let payload = rule.management_plane_payload();
-        let is_empty = payload.as_object().map_or(true, |obj| obj.is_empty());
-        if payload.is_null() || is_empty {
-            return Err(format!(
-                "Rule '{}' missing encoding payload (fail-closed)",
-                rule.rule_id()
-            ));
-        }
-
-        let response = self
-            .encoding_http_client
-            .post(self.encoding_endpoint(endpoint))
-            .json(&payload)
-            .send()
-            .await
-            .map_err(|e| {
-                format!(
-                    "Failed to call Management Plane {} for rule {}: {}",
-                    endpoint,
-                    rule.rule_id(),
-                    e
-                )
-            })?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "<unavailable>".to_string());
-            return Err(format!(
-                "{} returned {} for rule {}: {}",
-                endpoint,
-                status,
-                rule.rule_id(),
-                body
-            ));
-        }
-
-        let anchors: RuleAnchorsResponse = response
-            .json()
-            .await
-            .map_err(|e| format!("Failed to parse {} response: {}", endpoint, e))?;
-
-        let (action_anchors, action_count) =
-            convert_anchor_block("action", &anchors.action_anchors, anchors.action_count)?;
-        let (resource_anchors, resource_count) = convert_anchor_block(
-            "resource",
-            &anchors.resource_anchors,
-            anchors.resource_count,
-        )?;
-        let (data_anchors, data_count) =
-            convert_anchor_block("data", &anchors.data_anchors, anchors.data_count)?;
-        let (risk_anchors, risk_count) =
-            convert_anchor_block("risk", &anchors.risk_anchors, anchors.risk_count)?;
-
-        Ok(RuleVector {
-            action_anchors,
-            action_count,
-            resource_anchors,
-            resource_count,
-            data_anchors,
-            data_count,
-            risk_anchors,
-            risk_count,
-        })
-    }
 }
 
 #[tonic::async_trait]
@@ -312,68 +233,83 @@ impl DataPlane for DataPlaneService {
                     .collect(),
             };
 
+            let rule_type = cp_rule
+                .params
+                .get("rule_type")
+                .and_then(|value| value.as_string())
+                .unwrap_or_default();
+
+            let layer_label = if cp_rule.layer.is_empty() {
+                "global"
+            } else {
+                cp_rule.layer.as_str()
+            };
+
             println!(
-                "Processing rule: {} (family: {}, layer: {})",
-                cp_rule.rule_id, cp_rule.family_id, cp_rule.layer
+                "Processing rule: {} (type: {}, layer: {})",
+                cp_rule.rule_id,
+                rule_type,
+                layer_label
             );
 
-            // Convert control plane rule to bridge rule instance
-            match RuleConverter::convert(&cp_rule) {
-                Ok(bridge_rule) => {
-                    let family_id = bridge_rule.family_id();
-                    let layer_id = family_id.layer();
+            if rule_type != "design_boundary" {
+                let error_msg = format!(
+                    "Unsupported rule_type '{}' for rule {}",
+                    rule_type, cp_rule.rule_id
+                );
+                eprintln!("  ✗ {}\n", error_msg);
+                failed_rules.push(error_msg);
+                continue;
+            }
 
-                    println!("  ✓ Converted to {} rule", family_id.family_id());
-                    println!(
-                        "  → Installing into {} table ({})",
-                        family_id.family_id(),
-                        layer_id
-                    );
-
-                    // Encode rule and add to bridge
-                    let rule_vector_result = if let Some(payload) = anchor_payload.clone() {
-                        match convert_proto_rule_anchors(payload) {
-                            Ok(vector) => Ok(vector),
-                            Err(err) => {
-                                eprintln!(
-                                    "  ! Invalid supplied anchors for {}: {} (falling back to HTTP encoding)",
-                                    cp_rule.rule_id, err
-                                );
-                                self.encode_rule_during_installation(&bridge_rule).await
-                            }
-                        }
-                    } else {
-                        self.encode_rule_during_installation(&bridge_rule).await
-                    };
-
-                    match rule_vector_result {
-                        Ok(rule_vector) => {
-                            match self.bridge.add_rule_with_anchors(bridge_rule, rule_vector) {
-                                Ok(_) => {
-                                    installed_count += 1;
-                                    *rules_by_layer.entry(cp_rule.layer.clone()).or_insert(0) += 1;
-                                    println!("  ✓ Successfully installed\n");
-                                }
-                                Err(e) => {
-                                    let error_msg = format!(
-                                        "Failed to add rule {} to bridge: {}",
-                                        cp_rule.rule_id, e
-                                    );
-                                    eprintln!("  ✗ {}\n", error_msg);
-                                    failed_rules.push(error_msg);
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            let error_msg =
-                                format!("Failed to encode rule {}: {}", cp_rule.rule_id, e);
-                            eprintln!("  ✗ {}\n", error_msg);
-                            failed_rules.push(error_msg);
-                        }
-                    }
-                }
+            let bridge_rule = match convert_design_boundary_rule(&cp_rule) {
+                Ok(rule) => rule,
                 Err(e) => {
                     let error_msg = format!("Failed to convert rule {}: {}", cp_rule.rule_id, e);
+                    eprintln!("  ✗ {}\n", error_msg);
+                    failed_rules.push(error_msg);
+                    continue;
+                }
+            };
+
+            // Design boundary rules must always include anchor payloads
+            let payload = match anchor_payload.clone() {
+                Some(payload) => payload,
+                None => {
+                    let error_msg = format!(
+                        "Design boundary '{}' missing pre-encoded anchors",
+                        cp_rule.rule_id
+                    );
+                    eprintln!("  ✗ {}\n", error_msg);
+                    failed_rules.push(error_msg);
+                    continue;
+                }
+            };
+
+            let rule_vector = match convert_proto_rule_anchors(payload) {
+                Ok(vector) => vector,
+                Err(err) => {
+                    let error_msg = format!("Invalid anchors for {}: {}", cp_rule.rule_id, err);
+                    eprintln!("  ✗ {}\n", error_msg);
+                    failed_rules.push(error_msg);
+                    continue;
+                }
+            };
+
+            match self.bridge.add_rule_with_anchors(bridge_rule, rule_vector) {
+                Ok(_) => {
+                    installed_count += 1;
+                    let layer_key = if cp_rule.layer.is_empty() {
+                        "global".to_string()
+                    } else {
+                        cp_rule.layer.clone()
+                    };
+                    *rules_by_layer.entry(layer_key).or_insert(0) += 1;
+                    println!("  ✓ Successfully installed\n");
+                }
+                Err(e) => {
+                    let error_msg =
+                        format!("Failed to add rule {} to bridge: {}", cp_rule.rule_id, e);
                     eprintln!("  ✗ {}\n", error_msg);
                     failed_rules.push(error_msg);
                 }
@@ -387,6 +323,13 @@ impl DataPlane for DataPlaneService {
         println!("  Failed: {}", failed_rules.len());
         println!("  Bridge version: {}", self.bridge.version());
         println!("=================================================\n");
+
+        let current_stats = self.bridge.stats();
+        println!("Current bridge counts:");
+        println!("  - Total rules: {}", current_stats.total_rules);
+        println!("  - Global rules: {}", current_stats.global_rules);
+        println!("  - Scoped rules: {}", current_stats.scoped_rules);
+        println!();
 
         if !failed_rules.is_empty() {
             return Err(Status::internal(format!(
@@ -421,23 +364,15 @@ impl DataPlane for DataPlaneService {
 
         let mut removed_count = 0;
 
-        // Iterate through all families and remove rules for this agent
-        for family_id in RuleFamilyId::all() {
-            if let Some(table) = self.bridge.get_table(&family_id) {
-                let table_guard = table.read();
+        for rule in self.bridge.all_rules() {
+            if !rule.scope().applies_to(&req.agent_id) {
+                continue;
+            }
 
-                // Get all rules for this agent
-                let agent_rules = table_guard.query_by_agent(&req.agent_id);
-                drop(table_guard);
-
-                // Remove each rule
-                for rule in agent_rules {
-                    match self.bridge.remove_rule(&family_id, rule.rule_id()) {
-                        Ok(removed) if removed => removed_count += 1,
-                        Ok(_) => {}
-                        Err(e) => eprintln!("Failed to remove rule {}: {}", rule.rule_id(), e),
-                    }
-                }
+            match self.bridge.remove_rule(rule.rule_id()) {
+                Ok(true) => removed_count += 1,
+                Ok(false) => {}
+                Err(e) => eprintln!("Failed to remove rule {}: {}", rule.rule_id(), e),
             }
         }
 
@@ -454,25 +389,14 @@ impl DataPlane for DataPlaneService {
         _request: Request<GetRuleStatsRequest>,
     ) -> Result<Response<GetRuleStatsResponse>, Status> {
         let stats = self.bridge.stats();
-        let table_stats = self.bridge.table_stats();
 
         Ok(Response::new(GetRuleStatsResponse {
             bridge_version: stats.version as i64,
-            total_tables: stats.total_tables as i32,
+            total_tables: 1,
             total_rules: stats.total_rules as i32,
-            total_global_rules: stats.total_global_rules as i32,
-            total_scoped_rules: stats.total_scoped_rules as i32,
-            table_stats: table_stats
-                .iter()
-                .map(|ts| TableStats {
-                    family_id: ts.family_id.family_id().to_string(),
-                    layer_id: format!("{}", ts.layer_id),
-                    version: ts.version as i64,
-                    rule_count: ts.rule_count as i32,
-                    global_count: ts.global_count as i32,
-                    scoped_count: ts.scoped_count as i32,
-                })
-                .collect(),
+            total_global_rules: stats.global_rules as i32,
+            total_scoped_rules: stats.scoped_rules as i32,
+            table_stats: Vec::new(),
         }))
     }
 
@@ -632,6 +556,48 @@ impl DataPlane for DataPlaneService {
 
         Ok(Response::new(GetSessionResponse { session_json }))
     }
+
+    /// Handle RefreshRules gRPC request.
+    ///
+    /// Triggers immediate refresh of rules from warm storage.
+    /// Useful when:
+    /// - Rules changed externally
+    /// - Need to sync hot cache with persistent storage
+    /// - Testing refresh mechanism
+    async fn refresh_rules(
+        &self,
+        _request: Request<RefreshRulesRequest>,
+    ) -> Result<Response<RefreshRulesResponse>, Status> {
+        println!("================================================");
+        println!("  RefreshRules RPC called");
+        println!("================================================");
+
+        // Call refresh service
+        match self.refresh_service.refresh_from_storage().await {
+            Ok(stats) => {
+                println!(
+                    "Refresh completed: {} rules in {}ms",
+                    stats.rules_refreshed, stats.duration_ms
+                );
+                println!("=================================================\n");
+
+                Ok(Response::new(RefreshRulesResponse {
+                    success: true,
+                    message: format!(
+                        "Refreshed {} rules in {}ms",
+                        stats.rules_refreshed, stats.duration_ms
+                    ),
+                    rules_refreshed: stats.rules_refreshed as i32,
+                    duration_ms: stats.duration_ms as i64,
+                }))
+            }
+            Err(e) => {
+                eprintln!("  ✗ Refresh failed: {}", e);
+                println!("=================================================\n");
+                Err(Status::internal(format!("Refresh failed: {}", e)))
+            }
+        }
+    }
 }
 
 // ================================================================================================
@@ -655,6 +621,33 @@ fn extract_intent_summary(intent_json: &str) -> String {
     "unknown".to_string()
 }
 
+fn convert_design_boundary_rule(
+    cp_rule: &ControlPlaneRule,
+) -> Result<Arc<dyn RuleInstance>, String> {
+    let params_value = cp_params_to_value(&cp_rule.params);
+
+    let description = cp_rule.params.get("notes").and_then(|value| value.as_string());
+
+    let scope = RuleScope::for_agent(cp_rule.agent_id.clone());
+
+    let layer = if cp_rule.layer.is_empty() {
+        None
+    } else {
+        Some(cp_rule.layer.clone())
+    };
+
+    Ok(Arc::new(DesignBoundaryRule::new(
+        cp_rule.rule_id.clone(),
+        cp_rule.priority as u32,
+        scope,
+        layer,
+        cp_rule.created_at_ms as u64,
+        cp_rule.enabled,
+        description,
+        params_value,
+    )) as Arc<dyn RuleInstance>)
+}
+
 // ================================================================================================
 // SERVER STARTUP
 // ================================================================================================
@@ -669,6 +662,19 @@ pub async fn start_grpc_server(
 
     println!("Starting Data Plane gRPC server on {}", addr);
     println!("Management Plane URL: {}", management_plane_url);
+
+    let scheduler = Arc::new(RefreshScheduler::new(
+        Arc::clone(&bridge),
+        SchedulerConfig::default(),
+    ));
+
+    {
+        let scheduler_runner = Arc::clone(&scheduler);
+        tokio::spawn(async move {
+            println!("Spawning scheduled refresh background task");
+            scheduler_runner.start().await;
+        });
+    }
 
     let service = DataPlaneService::new(bridge, management_plane_url);
 

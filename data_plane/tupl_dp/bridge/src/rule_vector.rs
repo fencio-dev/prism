@@ -1,10 +1,11 @@
+use serde::{Deserialize, Serialize};
 use std::convert::TryInto;
 
 pub const MAX_ANCHORS_PER_SLOT: usize = 16;
 pub const SLOT_WIDTH: usize = 32;
 
 /// Anchors for a single rule, stored per slot for sandbox comparisons.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct RuleVector {
     pub action_anchors: [[f32; SLOT_WIDTH]; MAX_ANCHORS_PER_SLOT],
     pub action_count: usize,
