@@ -1,4 +1,11 @@
-.PHONY: help install test test-mgmt test-sdk clean run-mgmt run-data run-all build-rust build-data lint format
+.PHONY: help install test test-mgmt test-sdk clean run-mgmt run-data run-all run-mcp build-rust build-data lint format no-mcp
+
+ROOT := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+LOG_DIR := $(ROOT)/data/logs
+
+ifneq (,$(filter no-mcp,$(MAKECMDGOALS)))
+NO_MCP=1
+endif
 
 help:
 	@echo "Semantic Security MVP - Development Commands"
@@ -16,7 +23,9 @@ help:
 	@echo "Running:"
 	@echo "  make run-mgmt         Run management-plane server (dev mode, port 8000)"
 	@echo "  make run-data         Run data-plane server (port 50051)"
+	@echo "  make run-mcp          Run MCP server (port 3001)"
 	@echo "  make run-all          Run both management-plane AND data-plane"
+	@echo "  make run-mgmt no-mcp   Run management-plane only (skip MCP)"
 	@echo ""
 	@echo "Building:"
 	@echo "  make build-rust       Build Rust semantic-sandbox library"
@@ -66,25 +75,39 @@ clean:
 
 run-mgmt:
 	@echo "Starting management-plane server on port 8000..."
-	@mkdir -p data/logs
+	@mkdir -p $(LOG_DIR)
+	@if [ "$(NO_MCP)" = "1" ]; then \
+		echo "MCP server disabled"; \
+	else \
+		echo "Starting MCP server on port 3001..."; \
+		(cd management_plane && uv run python -m mcp_server.server >> $(LOG_DIR)/mcp-server.log 2>&1) & \
+	fi
 	cd management_plane && uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 run-data:
 	@echo "Starting data-plane server on port 50051..."
-	@mkdir -p data/logs
+	@mkdir -p $(LOG_DIR)
 	cd data_plane/tupl_dp/bridge && cargo run --bin bridge-server
 
+run-mcp:
+	@echo "Starting MCP server on port 3001..."
+	@mkdir -p $(LOG_DIR)
+	cd management_plane && uv run python -m mcp_server
+
 run-all:
-	@echo "Starting both management-plane (8000) and data-plane (50051)..."
+	@echo "Starting management-plane (8000), data-plane (50051), and MCP (3001)..."
 	@echo "Logs will be written to:"
-	@echo "  - Management Plane: data/logs/management-plane.log"
-	@echo "  - Data Plane:       data/logs/data-plane.log"
+	@echo "  - Management Plane: $(LOG_DIR)/management-plane.log"
+	@echo "  - Data Plane:       $(LOG_DIR)/data-plane.log"
+	@echo "  - MCP Server:       $(LOG_DIR)/mcp-server.log"
 	@echo ""
-	@mkdir -p data/logs
+	@mkdir -p $(LOG_DIR)
 	@trap 'kill 0' EXIT; \
-	(cd data_plane/tupl_dp/bridge && cargo run --bin bridge-server > ../../../../../../data/logs/data-plane.log 2>&1) & \
+	(cd data_plane/tupl_dp/bridge && cargo run --bin bridge-server > $(LOG_DIR)/data-plane.log 2>&1) & \
 	sleep 3; \
-	(cd management_plane && uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 >> ../data/logs/management-plane.log 2>&1) & \
+		(cd management_plane && uv run python -m mcp_server >> $(LOG_DIR)/mcp-server.log 2>&1) & \
+	sleep 1; \
+	(cd management_plane && uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 >> $(LOG_DIR)/management-plane.log 2>&1) & \
 	wait
 
 build-rust:
@@ -115,3 +138,6 @@ c: clean
 r: run-mgmt
 rd: run-data
 ra: run-all
+
+no-mcp:
+	@:

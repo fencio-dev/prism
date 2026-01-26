@@ -78,13 +78,10 @@ This plan describes the implementation of a **Model Context Protocol (MCP) serve
    - Multi-tenant support via API keys
 2. **MCP Client SDK** (Python, separate package)
 
-   - **Thin MCP client wrapper** (connection + auth only, no custom tool logic)
-   - **Dual integration modes**:
-     - **Config-based** (MCP-native agents): Add Guard URL to config, tools auto-discover
-     - **Library-based** (custom agents): `pip install guard-mcp-client`, embed in agent code
-   - Works with any MCP-compatible agent framework (LangChain, OpenAI, Strands, etc.)
-   - Follows standard MCP protocol - tools come from server, not client package
-   - Provides config templates + integration examples (NOT framework adapters)
+   - Standard MCP client (zero-config tool discovery)
+   - Works with any MCP-compatible agent framework
+   - Tools auto-appear when agent connects (like Claude Code/Cursor)
+   - For custom agents: thin connection wrapper for manual tool discovery
 3. **Documentation & Examples**
 
    - System prompt template for agents
@@ -106,12 +103,9 @@ This plan describes the implementation of a **Model Context Protocol (MCP) serve
 - [ ] Intent is sent to `/api/v2/enforce`, canonicalized, and enforced
 - [ ] Decision (ALLOW/DENY) is returned to agent
 - [ ] Agent responds appropriately (proceed, deny, or retry)
-- [ ] No framework-specific adapters in client package (thin wrapper only)
+- [ ] No framework-specific code required
 - [ ] Multi-tenant support via API key authentication
-- [ ] Config-based integration works for MCP-native agents (Claude Desktop, Cursor, LangChain, OpenAI Agents, Strands)
-- [ ] Library-based integration works for custom agents via `guard_mcp_client` package
-- [ ] Working examples for 3+ frameworks (LangChain, Strands, OpenAI Agents, custom agents)
-- [ ] Client embeddable in custom agent code (not just config files)
+- [ ] Integration examples for 3+ frameworks
 
 ---
 
@@ -344,47 +338,17 @@ For custom agents without native MCP support:
 ```python
 from guard_mcp_client import GuardMCPClient
 
-class MyCustomAgent:
-    """Example: Custom agent with embedded Guard MCP client."""
-    
-    async def run_task(self, user_query: str):
-        """Execute agent task with Guard enforcement."""
-        # Connect to Guard MCP server
-        async with GuardMCPClient(
-            server_url="https://guard.company.com/mcp",
-            api_key="sk-..."
-        ).connect() as guard_session:
-            
-            # Discover Guard tools (send_intent, explain_denial)
-            tools = await guard_session.list_tools()
-            
-            # Get governance prompts
-            prompts = await guard_session.list_prompts()
-            
-            # Agent determines intent based on user query
-            # (In real implementation, LLM would extract this)
-            intent = self.extract_intent(user_query)
-            
-            # Check with Guard BEFORE calling business tool
-            decision = await guard_session.call_tool(
-                "send_intent",
-                {
-                    "action": intent["action"],
-                    "resource": intent["resource"],
-                    "data": intent["data"],
-                    "risk": intent["risk"]
-                }
-            )
-            
-            # Parse decision
-            result = decision.content[0].text  # JSON with {"decision": "ALLOW/DENY", ...}
-            
-            if result["decision"] == "ALLOW":
-                # Proceed with actual business tool
-                return await self.execute_business_tool(intent)
-            else:
-                # Denied - explain to user
-                return f"Cannot proceed: {result['rationale']}"
+async def my_custom_agent():
+    async with GuardMCPClient(api_key="sk-...") as mcp:
+        # Discover tools automatically
+        tools = await mcp.list_tools()
+        # Returns: [{"name": "send_intent", "description": "...", ...}]
+  
+        # Get system prompt
+        prompt = await mcp.get_prompt("governed_agent_instructions")
+  
+        # Call tools
+        result = await mcp.call_tool("send_intent", {...})
 ```
 
 #### What Business Clients Must Do
@@ -409,6 +373,15 @@ class MyCustomAgent:
 ## 4. Implementation Plan
 
 ### Phase 1: MCP Server Core (Weeks 1-2)
+
+#### Implementation Notes
+
+- Dependencies live in `management_plane/pyproject.toml`: `fastmcp<3`, `PyYAML>=6.0` (repo uses `uv`, no `requirements.txt`).
+- MCP entrypoint is `management_plane/mcp_server/server.py` (`transport="http"`, env-configurable host/port/path).
+- Auth uses `app.auth.validate_api_key` with `Authorization: Bearer <api_key>`.
+- `send_intent` builds `LooseIntentEvent` with `tenantId` from API key, `actor=llm-agent`, and optional `layer` from `context`.
+- Enforcement call: `POST /api/v2/enforce` via `MANAGEMENT_PLANE_URL`, forwarding the same Authorization header.
+- Prompt content is stored in YAML under `management_plane/mcp_server/prompts/` and loaded by `prompts.py`.
 
 #### Task 1.1: Set up MCP server project structure
 
@@ -639,83 +612,16 @@ if __name__ == "__main__":
 
 **What it does**:
 
-- Thin MCP client wrapper (connection + auth only, NOT framework-specific)
+- Standard MCP client wrapper (NOT framework-specific)
 - Connection management only - tools auto-discover via MCP protocol
 - Config templates for popular MCP hosts (Claude Desktop, Cursor, Continue.dev)
 - Zero custom tool logic - everything comes from server
-- Embeddable as library in custom agent code
 
-**Implementation Approach** (based on MCP protocol research):
-
-1. **Thin Wrapper Design**:
-   - Package provides connection management and authentication only
-   - All tool logic lives on the server (auto-discovered via MCP protocol)
-   - No convenience methods like `send_intent()` - users call via `session.call_tool()`
-   - Clients use session API directly for maximum flexibility
-
-2. **Transport**:
-   - Use `streamablehttp_client` from `mcp.client.streamable_http` for HTTP-based Guard MCP server
-   - Support auth via headers: `{"Authorization": "Bearer <api_key>"}`
-   - Official MCP Python SDK provides this, not FastMCP (FastMCP is for servers)
-
-3. **Package Structure**:
-   ```
-   guard_mcp_client/
-   ├── __init__.py              # Exports GuardMCPClient
-   ├── client.py                # Thin GuardMCPClient class
-   ├── config_templates/        # Config examples for MCP-native agents
-   │   ├── claude_desktop.json
-   │   ├── cursor.json
-   │   ├── langchain_mcp.yaml
-   │   └── openai_agents.json
-   └── examples/                # Integration examples (NOT adapters)
-       ├── README.md
-       ├── custom_agent_embedded.py    # Full example with agent loop
-       ├── langchain_integration.py    # LangChain + Guard
-       ├── openai_agents_integration.py # OpenAI SDK + Guard
-       └── strands_integration.py      # Strands framework + Guard
-   ```
-
-4. **Key Principle**:
-   Client is **embeddable as a library** - customers can `pip install guard-mcp-client`
-   and use it programmatically within their custom agent code, not just via config files.
+**Key Design Principle**:
+Client is like adding a URL to Claude Code settings - connect and tools appear.
+No manual tool registration, no framework adapters.
 
 **Estimate**: 4 hours
-
----
-
-#### Task 2.1.1: Define client package dependencies
-
-**What it does**:
-
-Determine minimal dependencies for thin client wrapper.
-
-**Dependencies** (pyproject.toml):
-
-```toml
-[project]
-name = "guard-mcp-client"
-version = "0.1.0"
-dependencies = [
-    "mcp>=1.0.0",        # Official MCP Python SDK for client functionality
-    "httpx>=0.24.0",     # HTTP client (required by streamablehttp_client)
-]
-
-[project.optional-dependencies]
-examples = [
-    "langchain>=0.1.0",  # For LangChain integration examples
-    "openai>=1.0.0",     # For OpenAI agents integration examples
-    "strands>=0.1.0",    # For Strands framework integration examples
-]
-```
-
-**Rationale**:
-- **NOT using FastMCP for client** - FastMCP is a server framework, client uses official MCP SDK
-- Official MCP SDK provides `streamablehttp_client` for HTTP-based server connections
-- Thin wrapper means minimal core dependencies; framework examples are optional
-- This keeps the package lightweight and reduces dependency conflicts for users
-
-**Estimate**: 1 hour
 
 ---
 
@@ -729,75 +635,55 @@ examples = [
 
 ```python
 from mcp import ClientSession
-from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.sse import sse_client
 from contextlib import asynccontextmanager
-from typing import Optional
 
 class GuardMCPClient:
     """
-    Thin MCP client wrapper for Guard enforcement.
+    Standard MCP client for Guard enforcement.
   
-    Provides connection management and authentication to Guard's MCP server.
-    Tools auto-discover via MCP protocol.
+    Works like adding Guard to Claude Code/Cursor - just connect and 
+    tools appear automatically in any MCP-compatible agent.
   
-    Usage Pattern 1 - Config-based (MCP-native agents):
-      Add Guard URL to your agent's MCP config file.
-      Tools auto-discover. No code needed.
-      Examples: Claude Desktop, Cursor, LangChain, OpenAI Agents
+    For agents with native MCP support (LangChain, AutoGen, etc.):
+      - Add Guard URL to agent's MCP config
+      - Tools auto-discover (send_intent, explain_denial, etc.)
+      - No code changes needed
   
-    Usage Pattern 2 - Library-based (custom agents):
-      Import this class, connect, discover tools programmatically.
-      Then call tools via session.call_tool() in your agent loop.
+    For custom agents without MCP support:
+      - Use this client to connect manually
+      - Discover tools via list_tools()
+      - Call tools via call_tool()
     """
   
-    def __init__(
-        self,
-        server_url: str = "https://guard.company.com/mcp",
-        api_key: Optional[str] = None
-    ):
+    def __init__(self, server_url: str = "https://guard.company.com/mcp", api_key: str = None):
         self.server_url = server_url
         self.api_key = api_key
   
     @asynccontextmanager
     async def connect(self):
         """
-        Connect to Guard MCP server via HTTP transport.
-        
-        Yields MCP ClientSession with auto-discovered tools.
-        
-        Usage:
-            async with GuardMCPClient(api_key="sk-...").connect() as session:
-                tools = await session.list_tools()
-                result = await session.call_tool("send_intent", {...})
+        Connect to Guard MCP server.
+  
+        Returns MCP session with auto-discovered tools.
         """
-        # Build headers with API key auth
+        # For HTTP transport with auth
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
-      
-        # Use streamablehttp_client for HTTP-based MCP server
-        async with streamablehttp_client(self.server_url, headers=headers) as (read, write):
+  
+        async with sse_client(self.server_url, extra_headers=headers) as (read, write):
             async with ClientSession(read, write) as session:
                 await session.initialize()
                 yield session
   
     async def __aenter__(self):
-        """Context manager support for agent initialization."""
+        """Context manager support."""
         self._context = self.connect()
         self.session = await self._context.__aenter__()
         return self.session
   
     async def __aexit__(self, *args):
-        """Clean up connection on exit."""
         await self._context.__aexit__(*args)
 ```
-
-**Transport Details**:
-- Uses `streamablehttp_client` from official MCP SDK (not FastMCP)
-- Connects to Guard MCP server running at `server_url` (port 3001 by default)
-- Authentication via Bearer token in `Authorization` header
-- Session provides standard MCP methods:
-  - `await session.list_tools()` - discover available tools (send_intent, explain_denial, etc.)
-  - `await session.list_prompts()` - get system prompts
-  - `await session.call_tool(name, arguments)` - invoke tools
 
 **Estimate**: 4 hours
 
@@ -809,44 +695,31 @@ class GuardMCPClient:
 
 - Create `examples/mcp_config/claude_desktop.json`
 - Create `examples/mcp_config/cursor.json`
-- Create `examples/mcp_config/langchain_mcp.yaml`
-- Create `examples/mcp_config/openai_agents.json`
-- Create `examples/custom_agent_embedded.py` (full agent loop with Guard)
-- Create `examples/langchain_integration.py` (LangChain + Guard)
-- Create `examples/openai_agents_integration.py` (OpenAI SDK + Guard)
-- Create `examples/strands_integration.py` (Strands framework + Guard)
-- Create `examples/README.md` (integration guide)
+- Create `examples/mcp_config/langgraph.yaml`
+- Create `examples/custom_agent.py` (for non-MCP frameworks)
+- Create `examples/README.md`
 
 **What each example shows**:
 
-1. **MCP Config Examples** (preferred for MCP-native agents):
+1. **MCP Config Examples** (preferred for most users):
 
    - Claude Desktop / Cursor / Continue.dev config
    - LangChain MCP config
-   - OpenAI Agents SDK config
-   - **No code needed** - just config file!
-   
-2. **Integration Examples** (for agents with MCP support):
+   - AutoGen MCP config
+   - **No code needed** - just config!
+2. **Custom Agent Example** (for non-MCP frameworks):
 
-   - LangChain with Guard tools
-   - OpenAI Agents SDK with Guard tools
-   - Strands framework with Guard tools
-   - Full working code to copy & adapt
-   
-3. **Custom Agent Example** (for agents without native MCP support):
+   - Manual MCP connection
+   - Tool discovery via `list_tools()`
+   - Tool invocation via `call_tool()`
 
-   - Embedded Guard MCP client in agent loop
-   - Manual tool discovery and invocation
-   - Decision handling (ALLOW/DENY)
+**Example (Claude Desktop config)**:
 
-**Config Examples**:
-
-**Claude Desktop config** (`claude_desktop.json`):
 ```json
 {
   "mcpServers": {
     "guard-enforcement": {
-      "url": "https://guard.company.com/mcp",
+      "url": "http://<GUARD_URL>:<PORT>/mcp",
       "headers": {
         "Authorization": "Bearer sk-guard-YOUR_API_KEY"
       }
@@ -855,95 +728,9 @@ class GuardMCPClient:
 }
 ```
 
-**Cursor config** (`cursor.json`) - same structure, different location
+**That's it!** Tools appear automatically. No Python code needed.
 
----
-
-**Integration Code Examples**:
-
-**LangChain** (`examples/langchain_integration.py`):
-```python
-from langchain_mcp_adapters.client import MultiServerMCPClient
-from langgraph.prebuilt import create_react_agent
-from langchain_openai import ChatOpenAI
-
-async def setup_governed_agent():
-    """Create LangChain agent with Guard enforcement."""
-    # Add Guard alongside other MCP servers
-    client = MultiServerMCPClient({
-        "guard": {
-            "transport": "streamable_http",
-            "url": "https://guard.company.com/mcp",
-            "headers": {"Authorization": "Bearer YOUR_API_KEY"}
-        },
-        # Other business tools...
-        "slack": {"url": "https://slack-mcp.example.com/mcp"},
-    })
-    
-    # Get all tools (Guard + business tools)
-    tools = await client.get_tools()
-    # Includes: send_intent, explain_denial, slack_send_message, etc.
-    
-    # System prompt guides agent to call send_intent first
-    system_prompt = """You are a helpful assistant with strict security policies.
-    
-IMPORTANT: Before calling ANY tool that accesses data or performs actions:
-1. Analyze the intent using the send_intent tool
-2. Wait for ALLOW/DENY decision
-3. Only proceed if ALLOW is returned
-4. If DENY, explain to user and suggest alternatives"""
-    
-    # Create agent with Guard tools available
-    agent = create_react_agent(
-        ChatOpenAI(model="gpt-4"),
-        tools,
-        state_modifier=system_prompt
-    )
-    
-    return agent
-
-# Usage:
-agent = await setup_governed_agent()
-response = await agent.ainvoke({
-    "messages": "Send a message to #engineering channel"
-})
-```
-
-**Strands Framework** (`examples/strands_integration.py`):
-```python
-from strands import Agent
-from strands.tools.mcp import MCPClient
-from mcp.client.streamable_http import streamablehttp_client
-
-async def setup_strands_agent_with_guard():
-    """Create Strands agent with Guard enforcement."""
-    # Create Guard MCP client
-    guard_client = MCPClient(
-        lambda: streamablehttp_client(
-            "https://guard.company.com/mcp",
-            headers={"Authorization": "Bearer YOUR_API_KEY"}
-        )
-    )
-    
-    # Use in agent
-    with guard_client:
-        tools = guard_client.list_tools_sync()
-        agent = Agent(
-            model="gpt-4",
-            tools=tools,  # Guard tools auto-available
-            system_prompt="""You must call send_intent before any action.
-Wait for ALLOW/DENY before proceeding."""
-        )
-        response = agent("Read customer database")
-        return response
-```
-
-**Custom Agent** (`examples/custom_agent_embedded.py`):
-See enhanced Path B example above (lines 334-378).
-
----
-
-**Estimate**: 8 hours (includes detailed working examples for 3+ frameworks)
+**Estimate**: 6 hours
 
 ---
 
@@ -967,24 +754,7 @@ See enhanced Path B example above (lines 334-378).
 
 ---
 
-#### Task 3.2: Write system prompt design guide
-
-**Files**:
-
-- Create `docs/plans/MCP_SYSTEM_PROMPTS.md`
-
-**Content**:
-
-- Why system prompts matter for compliance
-- How to customize prompts per use case
-- A/B testing prompts for effectiveness
-- Examples: data analyst, customer service, ops engineer
-
-**Estimate**: 4 hours
-
----
-
-#### Task 3.3: Create comprehensive examples README
+#### Task 3.2: Create comprehensive examples README
 
 **Files**:
 
@@ -1001,7 +771,7 @@ See enhanced Path B example above (lines 334-378).
 
 ---
 
-#### Task 3.4: Update main README
+#### Task 3.3: Update main README
 
 **Files**:
 
@@ -1017,43 +787,7 @@ See enhanced Path B example above (lines 334-378).
 
 ---
 
-#### Task 3.5: Docker-compose updates
-
-**Files**:
-
-- Modify `deployment/docker-compose.local.yml`
-- Modify `deployment/docker-compose.production.yml`
-
-**What to add**:
-
-- MCP server service
-- Health check
-- Port exposure
-- Env vars
-
-**Example**:
-
-```yaml
-mcp-server:
-  image: guard-management-plane:latest
-  command: ["python", "-m", "management_plane.mcp_server.main"]
-  environment:
-    - MCP_SERVER_HOST=0.0.0.0
-    - MCP_SERVER_PORT=3001
-    - MANAGEMENT_PLANE_URL=http://localhost:8000
-  ports:
-    - "3001:3001"
-  depends_on:
-    - management-plane
-  healthcheck:
-    test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
-```
-
-**Estimate**: 4 hours
-
----
-
-#### Task 3.6: End-to-end integration test
+#### Task 3.4: End-to-end integration test
 
 **Files**:
 
