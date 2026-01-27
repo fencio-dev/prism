@@ -107,16 +107,16 @@ clean:
 run-mgmt:
 	@echo "🚀 Starting management-plane server on port $(or $(PORT),8000)..."
 	@mkdir -p $(LOG_DIR)
-	@if [ "$(NO_MCP)" = "1" ]; then \
-		echo "⏭️  MCP server disabled (no-mcp flag set)"; \
-	else \
-		echo "📍 Starting MCP server on port 3001..."; \
-		(cd management_plane && uv run python -m mcp_server >> $(LOG_DIR)/mcp-server.log 2>&1) & \
-		MCP_PID=$$!; \
-		echo "   MCP server PID: $$MCP_PID"; \
-		echo "   Logs: $(LOG_DIR)/mcp-server.log"; \
-		$(call wait_for_mcp_server,$(MCP_HEALTH_CHECK_TIMEOUT)) || { kill $$MCP_PID 2>/dev/null; exit 1; }; \
-	fi
+ifeq ($(NO_MCP),1)
+	@echo "⏭️  MCP server disabled (no-mcp flag set)"
+else
+	@echo "📍 Starting MCP server on port 3001..."
+	@(cd management_plane && uv run python -m mcp_server >> $(LOG_DIR)/mcp-server.log 2>&1) & \
+	MCP_PID=$$!; \
+	echo "   MCP server PID: $$MCP_PID"; \
+	echo "   Logs: $(LOG_DIR)/mcp-server.log"
+	$(call wait_for_mcp_server,$(MCP_HEALTH_CHECK_TIMEOUT))
+endif
 	@echo "📍 Starting management-plane server..."
 	cd management_plane && MGMT_PLANE_PORT=$(or $(PORT),8000) uv run uvicorn app.main:app --reload --host 0.0.0.0 --port $(or $(PORT),8000)
 
@@ -146,12 +146,26 @@ run-all:
 	echo "📍 Step 1/3: Starting data-plane on port 50051..."; \
 	(cd data_plane/tupl_dp/bridge && MANAGEMENT_PLANE_URL=http://localhost:$(or $(PORT),8000)/api/v2 cargo run --bin bridge-server > $(LOG_DIR)/data-plane.log 2>&1) & \
 	DATA_PLANE_PID=$$!; \
-	$(call wait_for_port,50051,$(DATA_PLANE_HEALTH_CHECK_TIMEOUT)) || { kill $$DATA_PLANE_PID 2>/dev/null; exit 1; }; \
+	echo "⏳ Waiting for data-plane on port 50051 (timeout: $(DATA_PLANE_HEALTH_CHECK_TIMEOUT)s)..."; \
+	for i in $$(seq 1 $(DATA_PLANE_HEALTH_CHECK_TIMEOUT)); do \
+		if nc -z localhost 50051 2>/dev/null; then \
+			echo "✅ Data-plane on port 50051 is ready"; \
+			break; \
+		fi; \
+		sleep 1; \
+	done; \
 	echo ""; \
 	echo "📍 Step 2/3: Starting MCP server on port 3001..."; \
 	(cd management_plane && uv run python -m mcp_server >> $(LOG_DIR)/mcp-server.log 2>&1) & \
 	MCP_PID=$$!; \
-	$(call wait_for_mcp_server,$(MCP_HEALTH_CHECK_TIMEOUT)) || { kill $$MCP_PID 2>/dev/null; kill $$DATA_PLANE_PID 2>/dev/null; exit 1; }; \
+	echo "⏳ Waiting for MCP server on port 3001 (timeout: $(MCP_HEALTH_CHECK_TIMEOUT)s)..."; \
+	for i in $$(seq 1 $(MCP_HEALTH_CHECK_TIMEOUT)); do \
+		if curl -s -H "Accept: text/event-stream" http://localhost:3001/mcp > /dev/null 2>&1; then \
+			echo "✅ MCP server on port 3001 is ready"; \
+			break; \
+		fi; \
+		sleep 1; \
+	done; \
 	echo ""; \
 	echo "📍 Step 3/3: Starting management-plane on port $(or $(PORT),8000)..."; \
 	(cd management_plane && MGMT_PLANE_PORT=$(or $(PORT),8000) uv run uvicorn app.main:app --reload --host 0.0.0.0 --port $(or $(PORT),8000) >> $(LOG_DIR)/management-plane.log 2>&1) & \
