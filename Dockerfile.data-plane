@@ -42,10 +42,12 @@ WORKDIR /app
 # Install runtime dependencies
 # - ca-certificates: For HTTPS connections
 # - libssl3: OpenSSL runtime libraries
+# - netcat-openbsd: For health checks
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     ca-certificates \
     libssl3 \
+    netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
 
 # Create necessary directories
