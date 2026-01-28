@@ -7,7 +7,7 @@
 
 # Stage 1: Builder - Compile Rust application
 # ============================================================================
-FROM rust:1.84 AS builder
+FROM rust:nightly AS builder
 
 # Set working directory
 WORKDIR /build
