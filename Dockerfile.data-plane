@@ -19,6 +19,9 @@ RUN apt-get update && \
     protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
 
+# Create app directory for binary output
+RUN mkdir -p /app
+
 # Copy the entire data_plane directory
 COPY data_plane/ /build/data_plane/
 
