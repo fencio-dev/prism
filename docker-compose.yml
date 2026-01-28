@@ -25,7 +25,7 @@ services:
     networks:
       - guard-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://chromadb:8000/api/v1/heartbeat"]
+      test: ["CMD", "nc", "-z", "localhost", "8000"]
       interval: 10s
       timeout: 5s
       retries: 5
