@@ -185,5 +185,5 @@ if __name__ == "__main__":
         host=config.HOST,
         port=config.PORT,
         log_level=config.LOG_LEVEL.lower(),
-        reload=True,  # Enable auto-reload for development
+        reload=False,
     )

@@ -28,7 +28,7 @@ class Config:
     API_V1_PREFIX: str = "/api/v1"
     API_V2_PREFIX: str = "/api/v2"
     HOST: str = os.getenv("MGMT_PLANE_HOST", "0.0.0.0")
-    PORT: int = int(os.getenv("MGMT_PLANE_PORT", "8000"))
+    PORT: int = int(os.getenv("MGMT_PLANE_PORT", "8001"))
 
     # CORS Configuration
     CORS_ORIGINS: list[str] = [

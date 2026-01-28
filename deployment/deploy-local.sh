@@ -54,7 +54,7 @@ if [ -f "$CONSOLE_ENV_FILE" ]; then
 else
   echo "⚠️  Warning: $CONSOLE_ENV_FILE not found. Using default localhost URLs for Console"
   # Set default local URLs
-  export VITE_API_BASE_URL="${VITE_API_BASE_URL:-http://localhost:8000/api}"
+  export VITE_API_BASE_URL="${VITE_API_BASE_URL:-http://localhost:8001/api}"
 fi
 
 # Validate required environment variables
@@ -120,7 +120,7 @@ for i in {1..60}; do
   SECURITY_STACK_HEALTHY=false
   CONSOLE_HEALTHY=false
 
-  if curl -f http://localhost:8000/health >/dev/null 2>&1; then
+  if curl -f http://localhost:8001/health >/dev/null 2>&1; then
     SECURITY_STACK_HEALTHY=true
   fi
 
@@ -173,12 +173,12 @@ $DOCKER_COMPOSE -f docker-compose.local.yml ps
 echo ""
 echo "🌐 Service URLs (all accessible from your browser):"
 echo "  Console:             http://localhost:8080"
-echo "  Management Plane:    http://localhost:8000/api/v2"
+echo "  Management Plane:    http://localhost:8001/api/v2"
 echo "  ChromaDB:            http://localhost:8002"
 echo "  Data Plane gRPC:     localhost:50051"
 echo ""
 echo "📊 Health Endpoints:"
-echo "  Management Plane:    http://localhost:8000/health"
+echo "  Management Plane:    http://localhost:8001/health"
 echo ""
 echo "🔧 Useful commands:"
 echo "  View logs (all):     $DOCKER_COMPOSE -f docker-compose.local.yml logs -f"

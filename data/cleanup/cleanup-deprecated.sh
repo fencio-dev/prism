@@ -301,7 +301,7 @@ if [[ "$DRY_RUN" == false ]]; then
     log_warning "Next steps:"
     echo "  1. Review this script's output"
     echo "  2. Test the application: cd management_plane && python -m pytest"
-    echo "  3. Run the application: cd management_plane && uvicorn app.main:app --reload"
+    echo "  3. Run the application: cd management_plane && uv run uvicorn app.main:app --port 8001"
     echo "  4. Commit the changes: git add -A && git commit -m 'cleanup: remove deprecated code not used by v2 APIs'"
     echo ""
 else

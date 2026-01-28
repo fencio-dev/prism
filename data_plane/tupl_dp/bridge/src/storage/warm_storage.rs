@@ -103,9 +103,12 @@ impl WarmStorage {
         let mmap_guard = self.mmap.read();
         let mmap = mmap_guard.as_ref().ok_or("Warm storage not loaded")?;
 
-        // Deserialize RuleVector at offset
-        let anchors: RuleVector = bincode::deserialize(&mmap[offset as usize..])
-            .map_err(|e| format!("Deserialize failed: {}", e))?;
+        // Deserialize (rule_id, RuleVector) at offset
+        let mut cursor = std::io::Cursor::new(&mmap[offset as usize..]);
+        let _stored_rule_id: String = bincode::deserialize_from(&mut cursor)
+            .map_err(|e| format!("Deserialize rule_id failed: {}", e))?;
+        let anchors: RuleVector = bincode::deserialize_from(&mut cursor)
+            .map_err(|e| format!("Deserialize anchors failed: {}", e))?;
 
         Ok(Some(anchors))
     }

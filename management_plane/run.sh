@@ -40,8 +40,8 @@ uv sync
 
 # Start the server with uvicorn
 echo -e "${GREEN}Starting FastAPI server...${NC}"
-echo -e "${YELLOW}API will be available at: http://localhost:8000${NC}"
-echo -e "${YELLOW}Interactive docs at: http://localhost:8000/docs${NC}"
+echo -e "${YELLOW}API will be available at: http://localhost:8001${NC}"
+echo -e "${YELLOW}Interactive docs at: http://localhost:8001/docs${NC}"
 echo ""
 
-uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --log-level info
+uv run uvicorn app.main:app --host 0.0.0.0 --port 8001 --log-level info

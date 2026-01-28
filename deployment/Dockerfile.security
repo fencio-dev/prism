@@ -81,7 +81,7 @@ ENV LD_LIBRARY_PATH=/app:$LD_LIBRARY_PATH
 
 # Health check (Management Plane)
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=60s \
-  CMD curl -f http://localhost:8000/health || exit 1
+  CMD curl -f http://localhost:8001/health || exit 1
 
 # Run supervisord
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]

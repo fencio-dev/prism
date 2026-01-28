@@ -112,7 +112,7 @@ for i in {1..120}; do
   SECURITY_STACK_HEALTHY=false
   CONSOLE_HEALTHY=false
 
-  if curl -f http://localhost:8000/health >/dev/null 2>&1; then
+  if curl -f http://localhost:8001/health >/dev/null 2>&1; then
     SECURITY_STACK_HEALTHY=true
   fi
 

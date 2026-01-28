@@ -23,11 +23,11 @@ make install
 cp deployment/.env.example .env
 # Edit .env with your configuration (DATA_PLANE_URL, BERT model paths, etc.)
 
-# Run BOTH management plane (port 8000) and data plane (port 50051)
+# Run BOTH management plane (port 8001) and data plane (port 50051)
 make run-all
 ```
 
-The API will be available at `http://localhost:8000/api/v2/`
+The API will be available at `http://localhost:8001/api/v2/`
 
 Logs are written to:
 - Management Plane: `data/logs/management-plane.log`
@@ -316,7 +316,7 @@ All three endpoints require authentication via one of:
 1. **JWT Token** (via Authorization header):
    ```bash
    curl -H "Authorization: Bearer <jwt-token>" \
-     -X POST http://localhost:8000/api/v2/enforce \
+     -X POST http://localhost:8001/api/v2/enforce \
      -H "Content-Type: application/json" \
      -d @request.json
    ```
@@ -324,7 +324,7 @@ All three endpoints require authentication via one of:
 2. **API Key** (via x-api-key header):
    ```bash
    curl -H "x-api-key: <api-key>" \
-     -X POST http://localhost:8000/api/v2/enforce \
+     -X POST http://localhost:8001/api/v2/enforce \
      -H "Content-Type: application/json" \
      -d @request.json
    ```
@@ -333,7 +333,7 @@ All three endpoints require authentication via one of:
    ```bash
    curl -H "tenant-id: tenant-1" \
      -H "user-id: user-123" \
-     -X POST http://localhost:8000/api/v2/enforce \
+     -X POST http://localhost:8001/api/v2/enforce \
      -H "Content-Type: application/json" \
      -d @request.json
    ```

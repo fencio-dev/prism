@@ -60,8 +60,8 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
 #[inline]
 fn max_anchor_similarity(intent_slice: &[f32], anchors: &[[f32; 32]], count: usize) -> f32 {
     if count == 0 {
-        // No anchors = wildcard (always pass)
-        return 1.0;
+        // No anchors = fail-closed (no match)
+        return 0.0;
     }
 
     anchors[..count]
@@ -191,7 +191,7 @@ mod tests {
         let intent = [1.0f32; 32];
         let anchors = [[0.0f32; 32]; 16];
         let result = max_anchor_similarity(&intent, &anchors, 0);
-        assert_eq!(result, 1.0, "Empty anchor set should be wildcard");
+        assert_eq!(result, 0.0, "Empty anchor set should fail-closed");
     }
 
     #[test]

@@ -381,12 +381,27 @@ async def enforce_v2(
 
         decision = "ALLOW" if result.decision == 1 else "DENY"
 
+        # Extract matched policy ID (IR ID) from evidence
+        # For ALLOW: take the first rule that permitted it as primary match
+        # For DENY: find the first rule that actually blocked it
+        policy_matched = None
+        if result.evidence:
+            if decision == "ALLOW":
+                policy_matched = result.evidence[0].boundary_id
+            else:
+                for ev in result.evidence:
+                    if ev.decision == 0:
+                        policy_matched = ev.boundary_id
+                        break
+
         return EnforcementResponse(
             decision=decision,
             enforcement_latency_ms=elapsed_ms,
             metadata={
                 "request_id": request_id,
                 "canonicalization_trace": trace_dict["canonicalization_trace"],
+                "policy_matched": policy_matched,
+                "evidence": [ev.model_dump() for ev in result.evidence],
             },
         )
 
