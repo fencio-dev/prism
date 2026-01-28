@@ -12,6 +12,13 @@ FROM rust:1.85 AS builder
 # Set working directory
 WORKDIR /build
 
+# Install build dependencies
+# - protobuf-compiler: Required for compiling .proto files with prost-build
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    protobuf-compiler \
+    && rm -rf /var/lib/apt/lists/*
+
 # Copy the entire data_plane directory
 COPY data_plane/ /build/data_plane/
 
