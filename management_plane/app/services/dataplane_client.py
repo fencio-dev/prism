@@ -15,6 +15,8 @@ from app.generated.rule_installation_pb2 import (
     QueryTelemetryRequest,
     GetSessionRequest,
     RefreshRulesRequest,
+    RemoveAgentRulesRequest,
+    RemovePolicyRequest,
 )
 from app.generated.rule_installation_pb2_grpc import DataPlaneStub
 from app.models import BoundaryEvidence, ComparisonResult, DesignBoundary
@@ -116,6 +118,13 @@ class DataPlaneClient:
             for boundary, vector in zip(boundaries, rule_vectors)
         ]
 
+        # evict any pre-existing rules so re-installs are idempotent
+        for boundary in boundaries:
+            try:
+                self.remove_policy(boundary.id, agent_id)
+            except DataPlaneError:
+                pass
+
         request = InstallRulesRequest(
             agent_id=agent_id,
             rules=rules,
@@ -144,6 +153,49 @@ class DataPlaneClient:
 
         except grpc.RpcError as e:
             raise DataPlaneError(f"InstallRules failed: {e.details()}", e.code())
+
+    def remove_agent_rules(self, agent_id: str) -> dict:
+        """Remove all rules for an agent from the Data Plane."""
+        request = RemoveAgentRulesRequest(agent_id=agent_id)
+
+        metadata = []
+        if self.token:
+            metadata.append(("authorization", f"Bearer {self.token}"))
+
+        try:
+            response = self.stub.RemoveAgentRules(
+                request,
+                timeout=self.timeout,
+                metadata=metadata if metadata else None,
+            )
+            return {
+                "success": response.success,
+                "message": response.message,
+                "rules_removed": response.rules_removed,
+            }
+        except grpc.RpcError as e:
+            raise DataPlaneError(f"RemoveAgentRules failed: {e.details()}", e.code())
+
+    def remove_policy(self, policy_id: str, agent_id: str) -> dict:
+        request = RemovePolicyRequest(agent_id=agent_id, policy_id=policy_id)
+
+        metadata = []
+        if self.token:
+            metadata.append(("authorization", f"Bearer {self.token}"))
+
+        try:
+            response = self.stub.RemovePolicy(
+                request,
+                timeout=self.timeout,
+                metadata=metadata if metadata else None,
+            )
+            return {
+                "success": response.success,
+                "message": response.message,
+                "rules_removed": response.rules_removed,
+            }
+        except grpc.RpcError as e:
+            raise DataPlaneError(f"RemovePolicy failed: {e.details()}", e.code())
 
     def _convert_response(self, response: EnforceResponse) -> ComparisonResult:
         """Convert gRPC EnforceResponse to ComparisonResult."""

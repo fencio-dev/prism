@@ -456,6 +456,43 @@ class LooseDesignBoundary(BaseModel):
     updatedAt: float
 
 
+class PolicyWriteRequest(BaseModel):
+    """
+    Policy payload for create/update operations.
+
+    Uses loose constraints to allow canonicalization on ingest.
+    """
+
+    id: str
+    name: str
+    status: Literal["active", "disabled"]
+    type: Literal["mandatory", "optional"]
+    boundarySchemaVersion: Literal["v1.1", "v1.2"] = "v1.2"
+    scope: BoundaryScope
+    layer: Optional[str] = None
+    rules: BoundaryRules
+    constraints: LooseBoundaryConstraints
+    notes: Optional[str] = None
+
+
+class PolicyListResponse(BaseModel):
+    policies: list[LooseDesignBoundary]
+
+
+class PolicyDeleteResponse(BaseModel):
+    success: bool
+    policy_id: str
+    rules_removed: int
+    message: str
+
+
+class PolicyClearResponse(BaseModel):
+    success: bool
+    policies_deleted: int
+    rules_removed: int
+    message: str
+
+
 # ============================================================================
 # FFI Boundary Types (Section 2.4)
 # ============================================================================

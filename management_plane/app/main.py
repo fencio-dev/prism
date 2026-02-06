@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .settings import config
-from .endpoints import enforcement_v2, health
+from .endpoints import enforcement_v2, health, policies_v2
 
 # Configure logging
 logging.basicConfig(
@@ -135,6 +135,7 @@ app.add_middleware(
 # Register routers
 app.include_router(health.router)
 app.include_router(enforcement_v2.router, prefix=config.API_V2_PREFIX)  # NEW v2: Canonicalization + Enforcement
+app.include_router(policies_v2.router, prefix=config.API_V2_PREFIX)
 
 
 # Global exception handler

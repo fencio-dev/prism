@@ -103,8 +103,8 @@ use rule_installation::{
     EnforceRequest, EnforceResponse, EnforcementSessionSummary, GetRuleStatsRequest,
     GetRuleStatsResponse, GetSessionRequest, GetSessionResponse, InstallRulesRequest,
     InstallRulesResponse, QueryTelemetryRequest, QueryTelemetryResponse, RefreshRulesRequest,
-    RefreshRulesResponse, RemoveAgentRulesRequest, RemoveAgentRulesResponse, RuleAnchorsPayload,
-    RuleEvidence,
+    RefreshRulesResponse, RemoveAgentRulesRequest, RemoveAgentRulesResponse, RemovePolicyRequest,
+    RemovePolicyResponse, RuleAnchorsPayload, RuleEvidence,
 };
 
 // ================================================================================================
@@ -381,6 +381,54 @@ impl DataPlane for DataPlaneService {
             message: format!("Removed {} rules for agent {}", removed_count, req.agent_id),
             rules_removed: removed_count as i32,
         }))
+    }
+
+    /// Remove a specific policy rule for an agent from the bridge
+    async fn remove_policy(
+        &self,
+        request: Request<RemovePolicyRequest>,
+    ) -> Result<Response<RemovePolicyResponse>, Status> {
+        let req = request.into_inner();
+        println!(
+            "Removing policy {} for agent {}",
+            req.policy_id, req.agent_id
+        );
+
+        let Some(rule) = self.bridge.get_rule(&req.policy_id) else {
+            return Ok(Response::new(RemovePolicyResponse {
+                success: false,
+                message: format!("Policy not found: {}", req.policy_id),
+                rules_removed: 0,
+            }));
+        };
+
+        if !rule.scope().applies_to(&req.agent_id) {
+            return Ok(Response::new(RemovePolicyResponse {
+                success: false,
+                message: format!(
+                    "Policy {} does not belong to agent {}",
+                    req.policy_id, req.agent_id
+                ),
+                rules_removed: 0,
+            }));
+        }
+
+        match self.bridge.remove_rule(rule.rule_id()) {
+            Ok(true) => Ok(Response::new(RemovePolicyResponse {
+                success: true,
+                message: format!("Removed policy {}", req.policy_id),
+                rules_removed: 1,
+            })),
+            Ok(false) => Ok(Response::new(RemovePolicyResponse {
+                success: false,
+                message: format!("Policy not found: {}", req.policy_id),
+                rules_removed: 0,
+            })),
+            Err(err) => Err(Status::internal(format!(
+                "Failed to remove policy {}: {}",
+                req.policy_id, err
+            ))),
+        }
     }
 
     /// Get current rule statistics from the bridge

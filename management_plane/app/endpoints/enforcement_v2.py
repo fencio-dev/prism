@@ -64,6 +64,7 @@ from app.services import (
     IntentEncoder,
     PolicyEncoder,
 )
+from app.services.policies import create_policy_record, update_policy_record
 
 logger = logging.getLogger(__name__)
 
@@ -559,6 +560,16 @@ async def install_policies_v2(
             raise HTTPException(status_code=500, detail="Policy installation failed") from e
 
         logger.info(f"Policy installed: {boundary.id}")
+
+        # Persist policy record so it is visible via GET /policies (list_policy_records)
+        now = time.time()
+        boundary.createdAt = boundary.createdAt or now
+        boundary.updatedAt = now
+        try:
+            create_policy_record(boundary, current_user.id)
+        except ValueError:
+            # Already exists from a previous install of the same boundary — update instead
+            update_policy_record(boundary, current_user.id)
 
         return InstallPoliciesResponse(
             status="installed",

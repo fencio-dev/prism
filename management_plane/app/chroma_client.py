@@ -74,6 +74,17 @@ def upsert_rule_payload(
     logger.info("Upserted rule '%s' into Chroma collection %s", rule_id, collection.name)
 
 
+def delete_tenant_collection(tenant_id: str) -> None:
+    """Delete the entire Chroma collection for a tenant. No-op if it does not exist."""
+    client = get_chroma_client()
+    name = _collection_name(tenant_id)
+    try:
+        client.delete_collection(name)
+        logger.info("Deleted Chroma collection %s", name)
+    except Exception as exc:
+        logger.warning("Chroma collection %s does not exist or delete failed: %s", name, exc)
+
+
 def fetch_rule_payload(tenant_id: str, rule_id: str) -> Optional[dict[str, Any]]:
     """Fetch stored anchor payload for rule_id if present."""
     collection = get_rules_collection(tenant_id)

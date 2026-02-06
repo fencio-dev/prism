@@ -10,6 +10,9 @@ service DataPlane {
   // Remove rules for an agent
   rpc RemoveAgentRules(RemoveAgentRulesRequest) returns (RemoveAgentRulesResponse);
 
+  // Remove a specific policy rule for an agent
+  rpc RemovePolicy(RemovePolicyRequest) returns (RemovePolicyResponse);
+
   // Get current rule statistics
   rpc GetRuleStats(GetRuleStatsRequest) returns (GetRuleStatsResponse);
 
@@ -50,6 +53,19 @@ message RemoveAgentRulesRequest {
 
 // Response after removing rules
 message RemoveAgentRulesResponse {
+  bool success = 1;
+  string message = 2;
+  int32 rules_removed = 3;
+}
+
+// Request to remove a specific policy rule for an agent
+message RemovePolicyRequest {
+  string agent_id = 1;
+  string policy_id = 2;
+}
+
+// Response after removing a policy rule
+message RemovePolicyResponse {
   bool success = 1;
   string message = 2;
   int32 rules_removed = 3;

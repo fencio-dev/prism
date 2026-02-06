@@ -5,7 +5,7 @@
 //! 2. Calls Management Plane to encode intent to 128d vector
 //! 3. Queries rules from Bridge for the specified layer
 //! 4. Compares intent vector directly against rule anchors using in-process comparison
-//! 5. Implements short-circuit evaluation (first BLOCK stops evaluation)
+//! 5. Implements short-circuit evaluation (first ALLOW match stops evaluation; fail-closed if none match)
 //! 6. Returns enforcement decision with evidence
 //! 7. Records complete telemetry to /var/hitlogs for audit trail
 
@@ -135,7 +135,7 @@ impl EnforcementEngine {
     /// This is the main entry point for enforcement. It:
     /// 1. Encodes the intent to 128d vector (via Management Plane)
     /// 2. Queries rules for the specified layer from Bridge
-    /// 3. Evaluates each rule with short-circuit (first BLOCK stops)
+    /// 3. Evaluates each rule with OR semantics (first ALLOW match stops; fail-closed if none match)
     /// 4. Records complete telemetry to hitlog
     /// 5. Returns enforcement decision with evidence
     pub async fn enforce(
@@ -299,7 +299,7 @@ impl EnforcementEngine {
             });
         }
 
-        // 3. Evaluate rules with SHORT-CIRCUIT
+        // 3. Evaluate rules with OR semantics (first allow match → ALLOW; no match → fail-closed BLOCK)
         let mut evidence = Vec::new();
         let evaluation_start = Instant::now();
 
@@ -387,10 +387,11 @@ impl EnforcementEngine {
                 });
             }
 
-            // SHORT CIRCUIT: First failure = immediate BLOCK
-            if result.decision == 0 {
+            // OR semantics: first allow match → ALLOW (short-circuit)
+            // decision == 0 means this rule didn't match; continue to next rule
+            if result.decision == 1 {
                 println!(
-                    "BLOCKED by rule '{}' (priority {}). Short-circuiting.",
+                    "ALLOWED by rule '{}' (priority {}). Short-circuiting.",
                     rule.rule_id(),
                     rule.priority()
                 );
@@ -423,7 +424,7 @@ impl EnforcementEngine {
                     telemetry.with_session(sid, |session| {
                         session.add_event(SessionEvent::FinalDecision {
                             timestamp_us: EnforcementSession::timestamp_us(),
-                            decision: 0,
+                            decision: 1,
                             rules_evaluated: evidence.len(),
                             total_duration_us: total_duration,
                         });
@@ -432,11 +433,11 @@ impl EnforcementEngine {
                     });
 
                     // Complete session
-                    telemetry.complete_session(sid, 0, total_duration).ok();
+                    telemetry.complete_session(sid, 1, total_duration).ok();
                 }
 
                 return Ok(EnforcementResult {
-                    decision: 0,
+                    decision: 1,
                     slice_similarities: result.slice_similarities,
                     rules_evaluated: evidence.len(),
                     evidence,
@@ -444,8 +445,11 @@ impl EnforcementEngine {
             }
         }
 
-        // All rules passed - ALLOW
-        println!("ALLOWED: All {} rules passed", rules_count);
+        // No allow rule matched → fail-closed BLOCK
+        println!(
+            "BLOCKED: No allow rules matched for layer {} (fail-closed)",
+            layer
+        );
 
         let evaluation_duration = evaluation_start.elapsed().as_micros() as u64;
         let total_duration = session_start.elapsed().as_micros() as u64;
@@ -456,7 +460,7 @@ impl EnforcementEngine {
             telemetry.with_session(sid, |session| {
                 session.add_event(SessionEvent::FinalDecision {
                     timestamp_us: EnforcementSession::timestamp_us(),
-                    decision: 1,
+                    decision: 0,
                     rules_evaluated: evidence.len(),
                     total_duration_us: total_duration,
                 });
@@ -465,11 +469,11 @@ impl EnforcementEngine {
             });
 
             // Complete session
-            telemetry.complete_session(sid, 1, total_duration).ok();
+            telemetry.complete_session(sid, 0, total_duration).ok();
         }
 
         Ok(EnforcementResult {
-            decision: 1,
+            decision: 0,
             slice_similarities: avg_similarities,
             rules_evaluated: evidence.len(),
             evidence,
