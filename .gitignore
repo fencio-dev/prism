@@ -184,5 +184,6 @@ AGENTS.md
 # Seed dataset (generated training data - not version controlled)
 data/seed/
 data/seed/**/*.jsonl
+.data
 
 tmp/
