@@ -146,8 +146,6 @@ message EnforceRequest {
   string intent_event_json = 1;
   // Optional pre-encoded 128-dim vector (minimizes re-encoding latency)
   repeated float intent_vector = 2;
-  // Optional request ID from the caller; becomes session_id in telemetry
-  string request_id = 3;
 }
 
 // Response from enforcement
@@ -163,9 +161,6 @@ message EnforceResponse {
 
   // Evidence from each rule evaluation
   repeated RuleEvidence evidence = 4;
-
-  // Echo of the request_id (or generated session_id if none was provided)
-  string request_id = 5;
 }
 
 // Evidence from a single rule evaluation

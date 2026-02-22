@@ -454,7 +454,6 @@ impl DataPlane for DataPlaneService {
         request: Request<EnforceRequest>,
     ) -> Result<Response<EnforceResponse>, Status> {
         let req = request.into_inner();
-        let request_id = req.request_id.clone();
 
         println!("================================================");
         println!("  Enforcing Intent");
@@ -484,7 +483,7 @@ impl DataPlane for DataPlaneService {
         // Call enforcement engine
         let result = self
             .enforcement_engine
-            .enforce(&req.intent_event_json, vector_override, &request_id)
+            .enforce(&req.intent_event_json, vector_override)
             .await
             .map_err(|e| Status::internal(format!("Enforcement failed: {}", e)))?;
 
@@ -513,7 +512,6 @@ impl DataPlane for DataPlaneService {
                     similarities: ev.similarities.to_vec(),
                 })
                 .collect(),
-            request_id: result.session_id.clone(),
         }))
     }
 

@@ -64,7 +64,6 @@ from app.services import (
     IntentEncoder,
     PolicyEncoder,
 )
-from app.services import session_store
 from app.services.policies import create_policy_record, update_policy_record
 
 logger = logging.getLogger(__name__)
@@ -350,15 +349,7 @@ async def enforce_v2(
                 client.enforce,
                 canonical_event,
                 vector.tolist(),
-                request_id,
             )
-
-            try:
-                agent_id = getattr(getattr(canonical_event, "rate_limit_context", None), "agent_id", None) or ""
-                action = getattr(canonical_event, "action", "") or ""
-                session_store.write_call(agent_id, request_id, action, str(result.decision))
-            except Exception as exc:
-                logger.error("session_store write_call failed: %s", exc)
 
             # Log enforcement outcome
             enforcement_outcome = "ALLOW" if result.decision == 1 else "DENY"

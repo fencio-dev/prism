@@ -5,7 +5,6 @@ Main entry point for the LLM Security Policy Enforcement Management Plane.
 Provides REST API for intent comparison, boundary management, and telemetry.
 """
 
-import asyncio
 import logging
 import time
 from contextlib import asynccontextmanager
@@ -16,8 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .settings import config
-from .endpoints import enforcement_v2, health, policies_v2, telemetry
-from .services import session_store
+from .endpoints import enforcement_v2, health, policies_v2
 
 # Configure logging
 logging.basicConfig(
@@ -99,23 +97,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     logger.info(f"Management Plane ready on {config.HOST}:{config.PORT}")
 
-    # Start session cleanup background task (runs every 10 minutes)
-    async def _session_cleanup_loop() -> None:
-        while True:
-            await asyncio.sleep(600)
-            try:
-                deleted = session_store.cleanup_expired()
-                if deleted > 0:
-                    logger.info("session cleanup: removed %d expired session(s)", deleted)
-            except Exception as e:
-                logger.error("session cleanup failed: %s", e)
-
-    cleanup_task = asyncio.create_task(_session_cleanup_loop())
-
     yield
 
     # Shutdown
-    cleanup_task.cancel()
     logger.info("Shutting down Management Plane")
 
     # Cleanup canonicalization logger
@@ -152,7 +136,6 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(enforcement_v2.router, prefix=config.API_V2_PREFIX)  # NEW v2: Canonicalization + Enforcement
 app.include_router(policies_v2.router, prefix=config.API_V2_PREFIX)
-app.include_router(telemetry.router, prefix=config.API_V2_PREFIX)
 
 
 # Global exception handler
