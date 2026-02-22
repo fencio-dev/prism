@@ -87,7 +87,7 @@ impl TelemetryRecorder {
     }
 
     /// Start a new enforcement session
-    pub fn start_session(&self, layer: String, intent_json: String, request_id: &str) -> Option<SessionId> {
+    pub fn start_session(&self, layer: String, intent_json: String) -> Option<SessionId> {
         if !self.config.enabled {
             return None;
         }
@@ -101,12 +101,8 @@ impl TelemetryRecorder {
             }
         }
 
-        // Use caller-supplied request_id if non-empty, otherwise generate UUID
-        let session_id = if request_id.is_empty() {
-            Uuid::new_v4().to_string()
-        } else {
-            request_id.to_string()
-        };
+        // Generate unique session ID
+        let session_id = Uuid::new_v4().to_string();
 
         // Create session
         let session = EnforcementSession::new(session_id.clone(), layer, intent_json);

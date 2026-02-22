@@ -59,7 +59,6 @@ class DataPlaneClient:
         self,
         intent: Any,  # Can be IntentEvent or dict
         intent_vector: Optional[List[float]] = None,
-        request_id: str = "",
     ) -> ComparisonResult:
         """Enforce rules against an IntentEvent."""
         # Validate required fields for v1.3
@@ -81,7 +80,6 @@ class DataPlaneClient:
         request = EnforceRequest(
             intent_event_json=intent_json,
             intent_vector=intent_vector or [],
-            request_id=request_id,
         )
 
         metadata = []

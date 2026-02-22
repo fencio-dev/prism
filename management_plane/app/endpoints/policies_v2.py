@@ -1,11 +1,9 @@
 """Policy CRUD endpoints for v2 management plane."""
 
 import asyncio
-import json
 import logging
 import os
 import time
-import uuid
 from functools import lru_cache
 from typing import cast
 
@@ -31,18 +29,6 @@ from app.services.policies import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/policies", tags=["policies-v2"])
-
-
-def _write_policy_audit(entry: dict) -> None:
-    from datetime import date
-    log_dir = "/var/log/guard/policy-audit"
-    os.makedirs(log_dir, exist_ok=True)
-    path = os.path.join(log_dir, f"{date.today().isoformat()}.jsonl")
-    try:
-        with open(path, "a") as f:
-            f.write(json.dumps(entry) + "\n")
-    except Exception as exc:
-        logger.error("policy audit log write failed: %s", exc)
 
 
 @lru_cache(maxsize=1)
@@ -125,7 +111,6 @@ async def create_policy(
     request: PolicyWriteRequest,
     current_user: User = Depends(get_current_tenant),
 ) -> LooseDesignBoundary:
-    request_id = str(uuid.uuid4())
     now = time.time()
     boundary = _boundary_from_request(request, current_user.id, now, now)
 
@@ -140,14 +125,6 @@ async def create_policy(
         delete_policy_record(current_user.id, boundary.id)
         raise
 
-    _write_policy_audit({
-        "ts": now,
-        "request_id": request_id,
-        "operation": "create_policy",
-        "policy_id": boundary.id,
-        "tenant_id": current_user.id,
-        "result": "ok",
-    })
     return boundary
 
 
@@ -176,7 +153,6 @@ async def update_policy(
     request: PolicyWriteRequest,
     current_user: User = Depends(get_current_tenant),
 ) -> LooseDesignBoundary:
-    request_id = str(uuid.uuid4())
     existing = fetch_policy_record(current_user.id, policy_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Policy not found")
@@ -192,14 +168,6 @@ async def update_policy(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     _persist_anchor_payload(current_user.id, boundary)
-    _write_policy_audit({
-        "ts": now,
-        "request_id": request_id,
-        "operation": "update_policy",
-        "policy_id": boundary.id,
-        "tenant_id": current_user.id,
-        "result": "ok",
-    })
     return boundary
 
 
@@ -208,7 +176,6 @@ async def delete_policy(
     policy_id: str,
     current_user: User = Depends(get_current_tenant),
 ) -> PolicyDeleteResponse:
-    request_id = str(uuid.uuid4())
     policy = fetch_policy_record(current_user.id, policy_id)
     if not policy:
         raise HTTPException(status_code=404, detail="Policy not found")
@@ -239,14 +206,6 @@ async def delete_policy(
     except Exception as exc:
         raise HTTPException(status_code=500, detail="Policy payload deletion failed") from exc
 
-    _write_policy_audit({
-        "ts": time.time(),
-        "request_id": request_id,
-        "operation": "delete_policy",
-        "policy_id": policy_id,
-        "tenant_id": current_user.id,
-        "result": "ok",
-    })
     return PolicyDeleteResponse(
         success=True,
         policy_id=policy_id,
@@ -260,7 +219,6 @@ async def clear_all_policies(
     current_user: User = Depends(get_current_tenant),
 ) -> PolicyClearResponse:
     """Remove every policy for the authenticated tenant across all three stores."""
-    request_id = str(uuid.uuid4())
     client = get_data_plane_client()
 
     # 1. Evict all rules from the Data Plane (cold_storage)
@@ -282,14 +240,6 @@ async def clear_all_policies(
     except Exception as exc:
         logger.warning("ChromaDB collection teardown failed (non-fatal): %s", exc)
 
-    _write_policy_audit({
-        "ts": time.time(),
-        "request_id": request_id,
-        "operation": "clear_all_policies",
-        "policy_id": "",
-        "tenant_id": current_user.id,
-        "result": "ok",
-    })
     return PolicyClearResponse(
         success=True,
         policies_deleted=policies_deleted,
