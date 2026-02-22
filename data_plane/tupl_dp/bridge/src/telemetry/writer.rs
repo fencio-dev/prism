@@ -105,8 +105,9 @@ impl HitlogWriter {
         let base_path = PathBuf::from(&config.base_dir);
 
         // Optional SQLite sink (controlled via env HITLOG_SQLITE_PATH)
-        let sqlite = std::env::var("HITLOG_SQLITE_PATH")
-            .ok()
+        let sqlite_path = std::env::var("HITLOG_SQLITE_PATH")
+            .unwrap_or_else(|_| "/var/lib/guard/hitlogs.db".to_string());
+        let sqlite = Some(sqlite_path)
             .map(|path| {
                 let p = PathBuf::from(path);
                 if let Some(parent) = p.parent() {

@@ -77,6 +77,9 @@ pub struct EnforcementResult {
 
     /// Evidence from each rule evaluation
     pub evidence: Vec<RuleEvidence>,
+
+    /// Session ID used for telemetry (equals request_id if provided, else a generated UUID)
+    pub session_id: String,
 }
 
 /// Evidence from a single rule evaluation
@@ -142,6 +145,7 @@ impl EnforcementEngine {
         &self,
         intent_json: &str,
         vector_override: Option<[f32; 128]>,
+        request_id: &str,
     ) -> Result<EnforcementResult, String> {
         let session_start = Instant::now();
 
@@ -156,11 +160,11 @@ impl EnforcementEngine {
 
         println!("Enforcing intent for layer: {}", layer);
 
-        // Start telemetry session
+        // Start telemetry session (uses request_id as session_id if non-empty)
         let session_id = self
             .telemetry
             .as_ref()
-            .and_then(|t| t.start_session(layer.to_string(), intent_json.to_string()));
+            .and_then(|t| t.start_session(layer.to_string(), intent_json.to_string(), request_id));
 
         // Populate agent_id and tenant_id from IntentEvent
         if let (Some(ref telemetry), Some(ref sid)) = (&self.telemetry, &session_id) {
@@ -232,6 +236,7 @@ impl EnforcementEngine {
                         slice_similarities: [0.0; 4],
                         rules_evaluated: 0,
                         evidence: vec![],
+                        session_id: session_id.clone().unwrap_or_else(|| request_id.to_string()),
                     });
                 }
             }
@@ -279,6 +284,7 @@ impl EnforcementEngine {
                 slice_similarities: [0.0; 4],
                 rules_evaluated: 0,
                 evidence: vec![],
+                session_id: session_id.clone().unwrap_or_else(|| request_id.to_string()),
             });
         }
 
@@ -441,6 +447,7 @@ impl EnforcementEngine {
                     slice_similarities: result.slice_similarities,
                     rules_evaluated: evidence.len(),
                     evidence,
+                    session_id: session_id.clone().unwrap_or_else(|| request_id.to_string()),
                 });
             }
         }
@@ -477,6 +484,7 @@ impl EnforcementEngine {
             slice_similarities: avg_similarities,
             rules_evaluated: evidence.len(),
             evidence,
+            session_id: session_id.clone().unwrap_or_else(|| request_id.to_string()),
         })
     }
 
