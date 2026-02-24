@@ -80,6 +80,10 @@ class Config:
         str(PROJECT_ROOT / "data" / "sessions.db"),
     )
     CANONICALIZATION_LOG_RETENTION_DAYS: int = int(os.getenv("CANONICALIZATION_LOG_RETENTION_DAYS", "90"))
+    POLICY_AUDIT_LOG_DIR: str = os.getenv(
+        "POLICY_AUDIT_LOG_DIR",
+        str(PROJECT_ROOT / "data" / "logs"),
+    )
     BERT_MODEL_PATH: str = os.getenv(
         "BERT_MODEL_PATH",
         "management_plane/models/canonicalizer_tinybert_v1.0/model_optimized.onnx",
