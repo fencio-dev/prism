@@ -12,6 +12,7 @@ from typing import cast
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.auth import User, get_current_tenant
+from app.settings import config
 from app.endpoints.enforcement_v2 import get_canonicalizer, get_policy_encoder
 from app.models import LooseDesignBoundary, PolicyClearResponse, PolicyDeleteResponse, PolicyListResponse, PolicyWriteRequest
 from app.services import DataPlaneClient, DataPlaneError
@@ -35,7 +36,7 @@ router = APIRouter(prefix="/policies", tags=["policies-v2"])
 
 def _write_policy_audit(entry: dict) -> None:
     from datetime import date
-    log_dir = "/var/log/guard/policy-audit"
+    log_dir = config.POLICY_AUDIT_LOG_DIR
     os.makedirs(log_dir, exist_ok=True)
     path = os.path.join(log_dir, f"{date.today().isoformat()}.jsonl")
     try:
