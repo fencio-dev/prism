@@ -73,6 +73,32 @@ def _init_db() -> None:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS enforce_calls (
+                    call_id            TEXT PRIMARY KEY,
+                    agent_id           TEXT NOT NULL,
+                    ts_ms              INTEGER NOT NULL,
+                    decision           TEXT NOT NULL,
+                    op                 TEXT,
+                    t                  TEXT,
+                    enforcement_result TEXT NOT NULL,
+                    intent_event       TEXT,
+                    is_dry_run         INTEGER NOT NULL DEFAULT 0
+                )
+                """
+            )
+            columns = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(enforce_calls)").fetchall()
+            }
+            if "intent_event" not in columns:
+                conn.execute("ALTER TABLE enforce_calls ADD COLUMN intent_event TEXT")
+            # Idempotent: add is_dry_run column if it doesn't exist
+            try:
+                conn.execute("ALTER TABLE enforce_calls ADD COLUMN is_dry_run INTEGER NOT NULL DEFAULT 0")
+            except Exception:
+                pass  # column already exists
             conn.commit()
             logger.info("session_store: DB initialized at %s", _SESSION_DB_PATH)
         finally:
@@ -146,6 +172,70 @@ def write_call(agent_id: str, request_id: str, action: str, decision: str) -> No
             "session_store: write_call failed for agent_id=%s request_id=%s: %s",
             agent_id,
             request_id,
+            exc,
+            exc_info=True,
+        )
+
+
+def insert_call(
+    call_id: str,
+    agent_id: str,
+    ts_ms: int,
+    decision: str,
+    op: str | None,
+    t: str | None,
+    enforcement_result_json: str,
+    intent_event_json: str | None = None,
+    is_dry_run: bool = False,
+) -> None:
+    """
+    Insert a row into enforce_calls for every POST /enforce call.
+
+    Uses INSERT OR REPLACE so replayed call_ids are idempotent.
+    On any exception: logs a structured error and returns without raising.
+    """
+    try:
+        conn = _get_connection()
+        try:
+            try:
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO enforce_calls
+                        (call_id, agent_id, ts_ms, decision, op, t, enforcement_result, intent_event, is_dry_run)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        call_id,
+                        agent_id,
+                        ts_ms,
+                        decision,
+                        op,
+                        t,
+                        enforcement_result_json,
+                        intent_event_json,
+                        1 if is_dry_run else 0,
+                    ),
+                )
+            except sqlite3.OperationalError as exc:
+                if "intent_event" not in str(exc):
+                    raise
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO enforce_calls
+                        (call_id, agent_id, ts_ms, decision, op, t, enforcement_result)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (call_id, agent_id, ts_ms, decision, op, t, enforcement_result_json),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+    except Exception as exc:
+        logger.error(
+            "session_store: insert_call failed for call_id=%s agent_id=%s: %s",
+            call_id,
+            agent_id,
             exc,
             exc_info=True,
         )
@@ -480,6 +570,144 @@ def list_sessions(
     except Exception as exc:
         logger.error("session_store: list_sessions failed: %s", exc, exc_info=True)
         return {"sessions": [], "total_count": 0, "limit": limit, "offset": offset}
+
+
+def list_calls(
+    limit: int = 50,
+    offset: int = 0,
+    agent_id: str | None = None,
+    decision: str | None = None,
+    start_ms: int | None = None,
+    end_ms: int | None = None,
+    is_dry_run: bool | None = None,
+) -> tuple[list[dict], int]:
+    """
+    Return a paginated list of enforce_calls rows with optional filters.
+
+    Filters:
+      - agent_id: exact match on agent_id
+      - decision: exact match on decision
+      - start_ms / end_ms: filter on ts_ms (stored as integer milliseconds)
+
+    Returns (rows, total_count). Rows contain: call_id, agent_id, ts_ms,
+    decision, op, t — enforcement_result is excluded from the list view.
+    On any exception: logs a structured error and returns ([], 0).
+    """
+    try:
+        conditions = []
+        params: list = []
+
+        if agent_id is not None:
+            conditions.append("agent_id = ?")
+            params.append(agent_id)
+
+        if decision is not None:
+            conditions.append("decision = ?")
+            params.append(decision)
+
+        if start_ms is not None:
+            conditions.append("ts_ms >= ?")
+            params.append(start_ms)
+
+        if end_ms is not None:
+            conditions.append("ts_ms <= ?")
+            params.append(end_ms)
+
+        if is_dry_run is not None:
+            conditions.append("is_dry_run = ?")
+            params.append(1 if is_dry_run else 0)
+
+        where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+        conn = _get_connection()
+        try:
+            rows = conn.execute(
+                f"SELECT call_id, agent_id, ts_ms, decision, op, t, is_dry_run FROM enforce_calls {where_clause} ORDER BY ts_ms DESC LIMIT ? OFFSET ?",
+                params + [limit, offset],
+            ).fetchall()
+
+            total_row = conn.execute(
+                f"SELECT COUNT(*) FROM enforce_calls {where_clause}",
+                params,
+            ).fetchone()
+        finally:
+            conn.close()
+
+        total_count = total_row[0] if total_row else 0
+        return [dict(row) for row in rows], total_count
+
+    except Exception as exc:
+        logger.error("session_store: list_calls failed: %s", exc, exc_info=True)
+        return [], 0
+
+
+def get_call(call_id: str) -> dict | None:
+    """
+    Return the full enforce_calls row for call_id, or None if not found.
+    enforcement_result is returned as a raw JSON string; callers deserialize it.
+    On any exception: logs a structured error and returns None.
+    """
+    try:
+        conn = _get_connection()
+        try:
+            try:
+                row = conn.execute(
+                    """
+                    SELECT call_id, agent_id, ts_ms, decision, op, t, enforcement_result, intent_event
+                    FROM enforce_calls
+                    WHERE call_id = ?
+                    """,
+                    (call_id,),
+                ).fetchone()
+            except sqlite3.OperationalError as exc:
+                if "intent_event" not in str(exc):
+                    raise
+                row = conn.execute(
+                    """
+                    SELECT call_id, agent_id, ts_ms, decision, op, t, enforcement_result
+                    FROM enforce_calls
+                    WHERE call_id = ?
+                    """,
+                    (call_id,),
+                ).fetchone()
+        finally:
+            conn.close()
+
+        if row is None:
+            return None
+
+        result = dict(row)
+        result.setdefault("intent_event", None)
+        return result
+
+    except Exception as exc:
+        logger.error(
+            "session_store: get_call failed for call_id=%s: %s",
+            call_id,
+            exc,
+            exc_info=True,
+        )
+        return None
+
+
+def delete_calls() -> int:
+    """
+    Delete all rows from enforce_calls.
+    Returns the number of deleted rows. Returns 0 on any exception.
+    """
+    try:
+        conn = _get_connection()
+        try:
+            cursor = conn.execute("DELETE FROM enforce_calls")
+            deleted = cursor.rowcount
+            conn.commit()
+        finally:
+            conn.close()
+        return deleted
+
+    except Exception as exc:
+        logger.error("session_store: delete_calls failed: %s", exc, exc_info=True)
+        return 0
 
 
 # ---------------------------------------------------------------------------

@@ -1,7 +1,7 @@
 import { getAuthHeaders } from './headers';
 
 export async function runEnforce(intentEvent) {
-  const response = await fetch('/api/v2/enforce', {
+  const response = await fetch('/api/v2/enforce?dry_run=1', {
     method: 'POST',
     headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(intentEvent),

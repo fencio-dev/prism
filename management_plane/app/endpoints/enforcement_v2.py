@@ -11,6 +11,7 @@ Features:
 """
 
 import asyncio
+import json
 import logging
 import os
 import time
@@ -89,6 +90,7 @@ def get_data_plane_client():
 async def enforce_v2(
     event: IntentEvent,
     current_user: User = Depends(get_current_tenant),
+    dry_run: bool = False,
 ) -> EnforcementResponse:
     """
     Enforce intent against active policies.
@@ -202,8 +204,8 @@ async def enforce_v2(
         except Exception as exc:
             logger.error("session_store update_call_decision failed: %s", exc)
 
-        # Step 9: Return EnforcementResponse
-        return EnforcementResponse(
+        # Step 9: Build and persist EnforcementResponse, then return it
+        enforcement_response = EnforcementResponse(
             decision=decision_name,
             modified_params=result.modified_params,
             drift_score=drift_score,
@@ -211,6 +213,23 @@ async def enforce_v2(
             slice_similarities=result.slice_similarities,
             evidence=result.evidence,
         )
+
+        try:
+            session_store.insert_call(
+                call_id=event.id,
+                agent_id=agent_id,
+                ts_ms=int(event.ts * 1000),
+                decision=decision_name,
+                op=event.op,
+                t=event.t,
+                enforcement_result_json=json.dumps(enforcement_response.model_dump()),
+                intent_event_json=json.dumps(event.model_dump(mode="json")),
+                is_dry_run=dry_run,
+            )
+        except Exception as exc:
+            logger.error("session_store insert_call failed: %s", exc)
+
+        return enforcement_response
 
     except HTTPException:
         raise

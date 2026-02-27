@@ -20,7 +20,7 @@ export default function App() {
   }
 
   return (
-    <div className="container" style={activeTab === 'Build Dataset' ? { maxWidth: '100%' } : {}}>
+    <div className="container">
       <header className="header">
         <span className="header-title">Guard</span>
         <nav className="tab-bar">
