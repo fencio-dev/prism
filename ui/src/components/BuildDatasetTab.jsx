@@ -182,7 +182,7 @@ export default function BuildDatasetTab() {
       </div>
 
       {/* Right panel — details or placeholder */}
-      <div style={{ flex: 1, overflowY: 'auto', height: '100%', padding: '20px 24px' }}>
+      <div style={{ flex: 1, overflowY: 'auto', overflowX: 'auto', height: '100%', padding: '20px 24px' }}>
         {selectedCall === null ? (
           <div style={{
             display: 'flex',
@@ -363,7 +363,7 @@ function SliceCell({ intent, anchor, similarity, threshold, isWorst, feedbackKey
       <hr style={{ margin: '8px 0', borderColor: '#eee' }} />
 
       <div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+        <div style={{ marginBottom: 4 }}>
           <input
             type="range"
             min="-100"
@@ -371,8 +371,10 @@ function SliceCell({ intent, anchor, similarity, threshold, isWorst, feedbackKey
             step="1"
             value={sliderDisplayValue}
             onChange={handleSliderChange}
-            style={{ flex: 1, cursor: 'pointer' }}
+            style={{ width: '100%', cursor: 'pointer', display: 'block' }}
           />
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
           <input
             type="number"
             min="-1"
@@ -382,7 +384,7 @@ function SliceCell({ intent, anchor, similarity, threshold, isWorst, feedbackKey
             onChange={handleNumberChange}
             onBlur={handleNumberBlur}
             style={{
-              width: 58,
+              width: 48,
               fontSize: 11,
               fontFamily: 'monospace',
               border: '1px solid #ddd',
@@ -391,7 +393,7 @@ function SliceCell({ intent, anchor, similarity, threshold, isWorst, feedbackKey
               textAlign: 'right',
             }}
           />
-          <span style={{ fontSize: 10, color: scoreLabelColor, fontWeight: 600, minWidth: 36, textAlign: 'right' }}>
+          <span style={{ fontSize: 10, color: scoreLabelColor, fontWeight: 600, minWidth: 28, textAlign: 'right' }}>
             {scoreLabel}
           </span>
         </div>
@@ -547,7 +549,7 @@ function RunDetail({ call }) {
           No evidence items for this run.
         </div>
       ) : (
-        <table style={{ borderCollapse: 'collapse', fontSize: 12, fontFamily: 'monospace', width: '100%', tableLayout: 'fixed' }}>
+        <table style={{ borderCollapse: 'collapse', fontSize: 12, fontFamily: 'monospace', width: '100%', tableLayout: 'fixed', minWidth: 900 }}>
           <thead>
             <tr style={{ background: '#f5f5f5' }}>
               <th style={{
