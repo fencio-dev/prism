@@ -169,10 +169,6 @@ const DEFAULT_STATE = {
   ctxCumulativeDrift: '',
 };
 
-const DRY_RUN_HISTORY_STORAGE_KEY = 'guard:ui:enforcement:dry-run-history';
-const DRY_RUN_HISTORY_STORAGE_VERSION = 2;
-const MAX_DRY_RUN_HISTORY = 10;
-
 const FORM_SNAPSHOT_KEYS = Object.keys(DEFAULT_STATE);
 
 function isPlainObject(value) {
@@ -209,110 +205,9 @@ function sanitizeFormSnapshot(value) {
   };
 }
 
-function sanitizeResult(value) {
-  if (value === null || value === undefined) return null;
-  if (typeof value !== 'object' || Array.isArray(value)) return null;
-  if (typeof value.decision !== 'string') return null;
-  if (!Array.isArray(value.slice_similarities) || value.slice_similarities.length !== 4) return null;
-  return value;
-}
-
-function sanitizeRunEntry(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  if (typeof value.decision !== 'string') return null;
-  if (typeof value.ts !== 'number' || !Number.isFinite(value.ts)) return null;
-
-  return {
-    formSnapshot: sanitizeFormSnapshot(value.formSnapshot),
-    decision: value.decision,
-    ts: value.ts,
-    result: sanitizeResult(value.result),
-  };
-}
-
-function normalizeRunsWithPinnedIndex(runsInput, pinnedIndexInput) {
-  const runs = Array.isArray(runsInput) ? [...runsInput] : [];
-  let pinnedIndex =
-    Number.isInteger(pinnedIndexInput) && pinnedIndexInput >= 0 && pinnedIndexInput < runs.length
-      ? pinnedIndexInput
-      : null;
-
-  while (runs.length > MAX_DRY_RUN_HISTORY) {
-    let dropIndex = runs.length - 1;
-    while (dropIndex >= 0 && dropIndex === pinnedIndex) {
-      dropIndex--;
-    }
-
-    if (dropIndex < 0) break;
-
-    runs.splice(dropIndex, 1);
-    if (pinnedIndex !== null && pinnedIndex > dropIndex) {
-      pinnedIndex--;
-    }
-  }
-
-  return { runs, pinnedIndex };
-}
-
-function loadDryRunHistoryFromSessionStorage() {
-  const fallback = { runs: [], pinnedIndex: null };
-
-  try {
-    if (typeof window === 'undefined' || !window.sessionStorage) return fallback;
-
-    const raw = window.sessionStorage.getItem(DRY_RUN_HISTORY_STORAGE_KEY);
-    if (!raw) return fallback;
-
-    const parsed = JSON.parse(raw);
-    if (!isPlainObject(parsed)) return fallback;
-    if (parsed.version !== 2) return fallback;
-    if (!Array.isArray(parsed.runs)) return fallback;
-    if (!(parsed.pinnedIndex === null || Number.isInteger(parsed.pinnedIndex))) return fallback;
-
-    const runs = parsed.runs.map(sanitizeRunEntry).filter(Boolean);
-
-    const pinnedIndex =
-      typeof parsed.pinnedIndex === 'number' &&
-      Number.isInteger(parsed.pinnedIndex) &&
-      parsed.pinnedIndex >= 0 &&
-      parsed.pinnedIndex < runs.length
-        ? parsed.pinnedIndex
-        : null;
-
-    return normalizeRunsWithPinnedIndex(runs, pinnedIndex);
-  } catch {
-    return fallback;
-  }
-}
-
-function persistDryRunHistoryToSessionStorage(runs, pinnedIndex) {
-  try {
-    if (typeof window === 'undefined' || !window.sessionStorage) return;
-
-    const sanitizedRuns = Array.isArray(runs) ? runs.map(sanitizeRunEntry).filter(Boolean) : [];
-    const sanitizedPinnedIndex =
-      Number.isInteger(pinnedIndex) && pinnedIndex >= 0 && pinnedIndex < sanitizedRuns.length
-        ? pinnedIndex
-        : null;
-
-    const normalized = normalizeRunsWithPinnedIndex(sanitizedRuns, sanitizedPinnedIndex);
-
-    const payload = {
-      version: DRY_RUN_HISTORY_STORAGE_VERSION,
-      runs: normalized.runs,
-      pinnedIndex: normalized.pinnedIndex,
-    };
-
-    window.sessionStorage.setItem(DRY_RUN_HISTORY_STORAGE_KEY, JSON.stringify(payload));
-  } catch {
-    // Fail soft when storage is unavailable.
-  }
-}
 
 export default function EnforcementDryRunForm() {
   const [formState, setFormState] = useState(DEFAULT_STATE);
-
-  const [hydratedHistory] = useState(() => loadDryRunHistoryFromSessionStorage());
 
   const [jsonMode, setJsonMode] = useState({ op: false, t: false, p: false });
   const [jsonErrors, setJsonErrors] = useState({ op: null, t: null, p: null });
@@ -321,13 +216,9 @@ export default function EnforcementDryRunForm() {
   const [result, setResult] = useState(null);
   const [submitError, setSubmitError] = useState(null);
   const [fieldErrors, setFieldErrors] = useState({});
-  const [runs, setRuns] = useState(() => hydratedHistory.runs);
-  const [pinnedIndex, setPinnedIndex] = useState(() => hydratedHistory.pinnedIndex);
+  const [runs, setRuns] = useState([]);
+  const [pinnedIndex, setPinnedIndex] = useState(null);
   const [policies, setPolicies] = useState([]);
-
-  useEffect(() => {
-    persistDryRunHistoryToSessionStorage(runs, pinnedIndex);
-  }, [runs, pinnedIndex]);
 
   useEffect(() => {
     fetchPolicies().then(setPolicies).catch(() => {});

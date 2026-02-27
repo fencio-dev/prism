@@ -14,6 +14,11 @@ const styles = {
     marginTop: 28,
     paddingTop: 24,
   },
+  panelNoDivider: {
+    borderTop: 'none',
+    marginTop: 0,
+    paddingTop: 0,
+  },
   panelTitle: {
     fontSize: 14,
     fontWeight: 600,
@@ -265,7 +270,7 @@ function EvidenceTable({ evidence, policyMap }) {
   );
 }
 
-export default function EnforcementResultPanel({ result, policies }) {
+export default function EnforcementResultPanel({ result, policies, showTopDivider = true }) {
   if (!result) return null;
 
   const {
@@ -282,7 +287,7 @@ export default function EnforcementResultPanel({ result, policies }) {
     : {};
 
   return (
-    <div style={styles.panel}>
+    <div style={showTopDivider ? styles.panel : styles.panelNoDivider}>
       <div style={styles.panelTitle}>Result</div>
 
       <DecisionBadge decision={decision} />

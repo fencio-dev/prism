@@ -1,5 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
-import { fetchSessions, fetchSessionDetail } from '../api/telemetry';
+import { fetchCalls, fetchCallDetail, deleteCalls } from '../api/telemetry';
+import { getPolicy } from '../api/policies';
+import EnforcementResultPanel from './EnforcementResultPanel';
+import RunAnchorComparisonPanel from './RunAnchorComparisonPanel';
 
 function formatTime(ms) {
   if (ms == null) return '—';
@@ -8,11 +11,10 @@ function formatTime(ms) {
 
 function formatTimeShort(ms) {
   if (ms == null) return '—';
-  const d = new Date(ms);
-  return d.toLocaleTimeString();
+  return new Date(ms).toLocaleTimeString();
 }
 
-function truncate(str, len = 12) {
+function truncate(str, len = 14) {
   if (!str) return '—';
   return str.length > len ? str.slice(0, len) + '...' : str;
 }
@@ -20,20 +22,17 @@ function truncate(str, len = 12) {
 const DECISION_COLORS = {
   ALLOW:   { background: '#d4edda', color: '#155724' },
   DENY:    { background: '#f8d7da', color: '#721c24' },
-  MODIFY:  { background: '#cce5ff', color: '#004085' },
-  STEP_UP: { background: '#fff3cd', color: '#856404' },
+  MODIFY:  { background: '#fff3cd', color: '#856404' },
+  STEP_UP: { background: '#cce5ff', color: '#004085' },
   DEFER:   { background: '#e2e3e5', color: '#383d41' },
 };
 
-function decisionBadgeStyle(decision) {
-  const colors = DECISION_COLORS[decision] ?? { background: '#e2e3e5', color: '#383d41' };
-  return { ...styles.badge, ...colors };
-}
-
-function formatDuration(us) {
-  if (us == null) return '—';
-  return (us / 1000).toFixed(2) + ' ms';
-}
+const SLICE_COMPARISON_CONFIG = [
+  { label: 'Action', intentKey: 'op', anchorKey: 'op' },
+  { label: 'Resource', intentKey: 't', anchorKey: 't' },
+  { label: 'Data', intentKey: 'p', anchorKey: 'p' },
+  { label: 'Risk', intentKey: 'ctx', anchorKey: 'ctx' },
+];
 
 const styles = {
   header: {
@@ -78,10 +77,102 @@ const styles = {
     fontSize: 13,
     color: '#856404',
     marginBottom: 16,
-    width: '100%',
   },
   tableWrapper: {
     overflowX: 'auto',
+    overflowY: 'auto',
+    height: '100%',
+  },
+  layout: (isNarrow) => ({
+    display: 'flex',
+    flexDirection: isNarrow ? 'column' : 'row',
+    gap: 16,
+  }),
+  leftPanel: (isNarrow) => ({
+    width: isNarrow ? '100%' : '50%',
+    height: isNarrow ? 360 : 'calc(100vh - 240px)',
+    border: '1px solid #e6e6e6',
+    borderRadius: 6,
+    overflow: 'hidden',
+    background: '#fff',
+  }),
+  rightPanel: (isNarrow) => ({
+    width: isNarrow ? '100%' : '50%',
+    height: isNarrow ? 'auto' : 'calc(100vh - 240px)',
+    border: '1px solid #e6e6e6',
+    borderRadius: 6,
+    padding: 12,
+    overflowY: 'auto',
+    background: '#fff',
+  }),
+  panelTitle: {
+    fontSize: 13,
+    fontWeight: 600,
+    color: '#333',
+    marginBottom: 10,
+  },
+  panelMessage: {
+    fontSize: 12,
+    color: '#666',
+    lineHeight: 1.4,
+  },
+  comparisonCard: {
+    border: '1px solid #eee',
+    borderRadius: 6,
+    padding: 10,
+    marginBottom: 10,
+    background: '#fafafa',
+  },
+  comparisonHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    marginBottom: 8,
+  },
+  comparisonName: {
+    fontSize: 12,
+    fontWeight: 600,
+    color: '#222',
+  },
+  comparisonStatus: {
+    fontSize: 11,
+    color: '#666',
+  },
+  sliceCard: {
+    borderTop: '1px solid #ececec',
+    paddingTop: 8,
+    marginTop: 8,
+  },
+  sliceLabel: {
+    fontSize: 11,
+    color: '#777',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  sliceMetrics: {
+    marginTop: 4,
+    fontSize: 11,
+    color: '#666',
+  },
+  sliceMetricsRow: {
+    marginTop: 4,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  sliceCheck: (passes) => ({
+    fontSize: 14,
+    fontWeight: 700,
+    color: passes ? '#166534' : '#991b1b',
+    lineHeight: 1,
+  }),
+  sectionDivider: {
+    borderTop: '1px solid #ececec',
+    marginTop: 14,
+    paddingTop: 10,
   },
   table: {
     width: '100%',
@@ -119,161 +210,156 @@ const styles = {
     fontStyle: 'italic',
     padding: '24px 0',
   },
-  detailPanel: {
-    borderTop: '2px solid #e8e8e8',
-    marginTop: 28,
-    paddingTop: 24,
-  },
-  detailHeader: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 16,
-  },
-  detailTitle: {
-    fontSize: 14,
+  dryRunPill: {
+    display: 'inline-block',
+    fontSize: 10,
     fontWeight: 600,
-    color: '#333',
-  },
-  closeButton: {
-    background: 'none',
-    border: 'none',
-    fontSize: 18,
-    cursor: 'pointer',
-    color: '#888',
-    lineHeight: 1,
-    padding: '0 4px',
-  },
-  kvGrid: {
-    display: 'flex',
-    flexWrap: 'wrap',
-    gap: 20,
-    marginBottom: 20,
-  },
-  kvItem: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 2,
-  },
-  kvLabel: {
-    fontSize: 11,
-    fontWeight: 600,
-    color: '#888',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  kvValue: {
-    fontSize: 13,
-    color: '#1a1a1a',
-    fontFamily: 'monospace',
-  },
-  pre: {
-    background: '#f5f5f5',
-    border: '1px solid #ddd',
-    borderRadius: 4,
-    padding: 14,
-    fontSize: 12,
-    fontFamily: 'monospace',
-    overflowX: 'auto',
-    whiteSpace: 'pre-wrap',
-    wordBreak: 'break-all',
-    color: '#1a1a1a',
+    padding: '1px 6px',
+    borderRadius: 3,
+    background: '#e8f0fe',
+    color: '#1a56db',
+    marginLeft: 6,
+    letterSpacing: 0.3,
   },
 };
 
-function SessionDetail({ session, onClose }) {
-  const decision = session?.final_decision ?? '—';
-  const badge = decisionBadgeStyle(decision);
-
-  return (
-    <div style={styles.detailPanel}>
-      <div style={styles.detailHeader}>
-        <span style={styles.detailTitle}>Session Detail</span>
-        <button style={styles.closeButton} onClick={onClose} aria-label="Close">×</button>
-      </div>
-      <div style={styles.kvGrid}>
-        <div style={styles.kvItem}>
-          <span style={styles.kvLabel}>Session ID</span>
-          <span style={styles.kvValue}>{session?.session_id ?? '—'}</span>
-        </div>
-        <div style={styles.kvItem}>
-          <span style={styles.kvLabel}>Agent ID</span>
-          <span style={styles.kvValue}>{session?.agent_id ?? '—'}</span>
-        </div>
-        <div style={styles.kvItem}>
-          <span style={styles.kvLabel}>Tenant ID</span>
-          <span style={styles.kvValue}>{session?.tenant_id ?? '—'}</span>
-        </div>
-        <div style={styles.kvItem}>
-          <span style={styles.kvLabel}>Layer</span>
-          <span style={styles.kvValue}>{session?.layer ?? '—'}</span>
-        </div>
-        <div style={styles.kvItem}>
-          <span style={styles.kvLabel}>Decision</span>
-          <span style={badge}>{decision}</span>
-        </div>
-        <div style={styles.kvItem}>
-          <span style={styles.kvLabel}>Duration</span>
-          <span style={styles.kvValue}>{formatDuration(session?.duration_us)}</span>
-        </div>
-        <div style={styles.kvItem}>
-          <span style={styles.kvLabel}>Rules Evaluated</span>
-          <span style={styles.kvValue}>{session?.rules_evaluated_count ?? '—'}</span>
-        </div>
-      </div>
-      <pre style={styles.pre}>{JSON.stringify(session, null, 2)}</pre>
-    </div>
-  );
+function decisionBadgeStyle(decision) {
+  const colors = DECISION_COLORS[decision] ?? { background: '#e2e3e5', color: '#383d41' };
+  return { ...styles.badge, ...colors };
 }
 
 export default function TelemetryTable() {
-  const [sessions, setSessions] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [offline, setOffline] = useState(false);
+  const [calls, setCalls] = useState([]);
   const [totalCount, setTotalCount] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [offline, setOffline] = useState(false);
+  const [error, setError] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
-  const [selectedSession, setSelectedSession] = useState(null);
+
+  const [selectedCallId, setSelectedCallId] = useState(null);
+  const [detail, setDetail] = useState(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
-  const [selectedRowId, setSelectedRowId] = useState(null);
+  const [detailError, setDetailError] = useState(null);
+  const [policyById, setPolicyById] = useState({});
+  const [loadingPolicies, setLoadingPolicies] = useState(false);
+  const [policyError, setPolicyError] = useState(null);
+  const [isNarrow, setIsNarrow] = useState(() =>
+    typeof window !== 'undefined' ? window.innerWidth < 1100 : false
+  );
+  const [page, setPage] = useState(0);
 
   const poll = useCallback(async () => {
     try {
-      const data = await fetchSessions({ limit: 50, offset: 0 });
-      setSessions(data?.sessions ?? []);
+      const data = await fetchCalls({ limit: 50, offset: page * 50 });
+      setCalls(data?.calls ?? []);
       setTotalCount(data?.total_count ?? 0);
       setOffline(false);
       setError(null);
       setLastUpdated(new Date());
     } catch (err) {
-      // TypeError = network/fetch failure; HTTP 5xx = backend error — both treated as offline
       const isNetworkError = err instanceof TypeError;
       const isServerError = err.message && /HTTP 5\d\d/.test(err.message);
       if (isNetworkError || isServerError) {
         setOffline(true);
       } else {
-        setError(err.message ?? 'Failed to fetch sessions');
+        setError(err.message ?? 'Failed to fetch calls');
       }
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [page]);
 
   useEffect(() => {
     poll();
     const id = setInterval(poll, 5000);
     return () => clearInterval(id);
-  }, [poll]);
+  }, [poll, page]);
 
-  async function handleRowClick(session) {
-    setSelectedRowId(session.session_id);
+  useEffect(() => {
+    function onResize() {
+      setIsNarrow(window.innerWidth < 1100);
+    }
+
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const evidence = detail?.enforcement_result?.evidence;
+    const intentEvent = detail?.call?.intent_event;
+
+    if (!detail || !intentEvent || !Array.isArray(evidence) || evidence.length === 0) {
+      setPolicyById({});
+      setLoadingPolicies(false);
+      setPolicyError(null);
+      return;
+    }
+
+    async function loadPolicies() {
+      setLoadingPolicies(true);
+      setPolicyError(null);
+
+      try {
+        const ids = [...new Set(evidence.map((entry) => entry.boundary_id).filter(Boolean))];
+        if (ids.length === 0) {
+          if (!cancelled) {
+            setPolicyById({});
+            setLoadingPolicies(false);
+          }
+          return;
+        }
+
+        const results = await Promise.all(ids.map(async (id) => ({ id, policy: await getPolicy(id) })));
+        if (cancelled) return;
+
+        const next = {};
+        for (const { id, policy } of results) {
+          if (policy) next[id] = policy;
+        }
+        setPolicyById(next);
+      } catch (err) {
+        if (!cancelled) {
+          setPolicyById({});
+          setPolicyError(err.message ?? 'Failed to load policy anchors');
+        }
+      } finally {
+        if (!cancelled) setLoadingPolicies(false);
+      }
+    }
+
+    loadPolicies();
+    return () => {
+      cancelled = true;
+    };
+  }, [detail]);
+
+  async function handleClearAll() {
+    if (!window.confirm('Delete all telemetry calls? This cannot be undone.')) return;
+    await deleteCalls();
+    setPage(0);
+    poll();
+  }
+
+  async function handleRowClick(call) {
+    const callId = call.call_id;
+    if (selectedCallId === callId) {
+      setSelectedCallId(null);
+      setDetail(null);
+      setDetailError(null);
+      return;
+    }
+    setSelectedCallId(callId);
+    setDetail(null);
+    setDetailError(null);
+    setPolicyById({});
+    setPolicyError(null);
     setLoadingDetail(true);
     try {
-      const detail = await fetchSessionDetail(session.session_id);
-      // Merge: full action_history from detail + pre-computed fields (final_decision) from list row
-      setSelectedSession({ ...session, ...(detail?.session ?? detail) });
+      const data = await fetchCallDetail(callId);
+      setDetail(data);
     } catch (err) {
-      setSelectedSession(session); // fall back to summary data
+      setDetailError(err.message ?? 'Failed to load call detail');
     } finally {
       setLoadingDetail(false);
     }
@@ -284,9 +370,13 @@ export default function TelemetryTable() {
       <div style={styles.header}>
         <div style={styles.heading}>
           Telemetry
-          <span style={styles.totalCount}>{totalCount} sessions</span>
+          <span style={styles.totalCount}>{totalCount} calls</span>
         </div>
-        <div style={styles.statusArea}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <button onClick={handleClearAll} style={{ fontSize: 12, padding: '4px 10px', cursor: 'pointer' }}>
+            Clear All
+          </button>
+          <div style={styles.statusArea}>
           {offline ? (
             <>
               <span style={styles.dot('red')} />
@@ -303,12 +393,13 @@ export default function TelemetryTable() {
               )}
             </>
           )}
+          </div>
         </div>
       </div>
 
       {offline && (
         <div style={styles.offlineBanner}>
-          ⚠ Guard backend is not reachable. Retrying...
+          Guard backend is not reachable. Retrying...
         </div>
       )}
 
@@ -318,71 +409,148 @@ export default function TelemetryTable() {
         </div>
       )}
 
-      <div style={styles.tableWrapper}>
-        <table style={styles.table}>
-          <thead>
-            <tr>
-              <th style={styles.th}>Time</th>
-              <th style={styles.th}>Intent</th>
-              <th style={styles.th}>Agent ID</th>
-              <th style={styles.th}>Tenant ID</th>
-              <th style={styles.th}>Layer</th>
-              <th style={styles.th}>Decision</th>
-              <th style={styles.th}>Duration</th>
-              <th style={styles.th}>Rules</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sessions.length === 0 ? (
-              <tr>
-                <td colSpan={8} style={styles.emptyState}>
-                  No sessions recorded yet.
-                </td>
-              </tr>
-            ) : (
-              sessions.map((s) => {
-                const isSelected = s.session_id === selectedRowId;
-                const decision = s.final_decision ?? '—';
-                const badge = decisionBadgeStyle(decision);
-                const rowBg = isSelected ? '#e8f0fe' : undefined;
-
-                return (
-                  <tr
-                    key={s.session_id}
-                    onClick={() => handleRowClick(s)}
-                    style={{ cursor: 'pointer', background: rowBg }}
-                    onMouseEnter={(e) => {
-                      if (!isSelected) e.currentTarget.style.background = '#f5f5f5';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.background = isSelected ? '#e8f0fe' : '';
-                    }}
-                  >
-                    <td style={styles.td}>{formatTime(s.timestamp_ms)}</td>
-                    <td style={styles.td}>{s.intent_summary ?? '—'}</td>
-                    <td style={styles.td}>{truncate(s.agent_id)}</td>
-                    <td style={styles.td}>{truncate(s.tenant_id)}</td>
-                    <td style={styles.td}>{s.layer ?? '—'}</td>
-                    <td style={styles.td}>
-                      <span style={badge}>{decision}</span>
+      <div style={styles.layout(isNarrow)}>
+        <div style={styles.leftPanel(isNarrow)}>
+          <div style={styles.tableWrapper}>
+            <table style={styles.table}>
+              <thead>
+                <tr>
+                  <th style={styles.th}>Time</th>
+                  <th style={styles.th}>Agent ID</th>
+                  <th style={styles.th}>Decision</th>
+                  <th style={styles.th}>Op</th>
+                  <th style={styles.th}>Target (t)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {calls.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} style={styles.emptyState}>
+                      No calls recorded yet.
                     </td>
-                    <td style={styles.td}>{formatDuration(s.duration_us)}</td>
-                    <td style={styles.td}>{s.rules_evaluated_count ?? '—'}</td>
                   </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
+                ) : (
+                  calls.map((c) => {
+                    const isSelected = c.call_id === selectedCallId;
+                    const decision = c.decision ?? '—';
+                    const badge = decisionBadgeStyle(decision);
+                    return (
+                      <tr
+                        key={c.call_id}
+                        onClick={() => handleRowClick(c)}
+                        style={{ cursor: 'pointer', background: isSelected ? '#e8f0fe' : undefined }}
+                        onMouseEnter={(e) => {
+                          if (!isSelected) e.currentTarget.style.background = '#f5f5f5';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = isSelected ? '#e8f0fe' : '';
+                        }}
+                      >
+                        <td style={styles.td}>{formatTime(c.ts_ms)}</td>
+                        <td style={styles.td}>
+                          {truncate(c.agent_id)}
+                          {c.is_dry_run && <span style={styles.dryRunPill}>dry run</span>}
+                        </td>
+                        <td style={styles.td}>
+                          <span style={badge}>{decision}</span>
+                        </td>
+                        <td style={styles.td}>{c.op ?? '—'}</td>
+                        <td style={styles.td}>{c.t ?? '—'}</td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', borderTop: '1px solid #eee', fontSize: 12, color: '#555' }}>
+            <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0} style={{ cursor: 'pointer', padding: '2px 8px' }}>
+              ← Prev
+            </button>
+            <span>Page {page + 1}</span>
+            <button onClick={() => setPage(p => p + 1)} disabled={calls.length < 50} style={{ cursor: 'pointer', padding: '2px 8px' }}>
+              Next →
+            </button>
+          </div>
+        </div>
+
+        <div style={styles.rightPanel(isNarrow)}>
+          {!selectedCallId && !loadingDetail && (
+            <div style={styles.panelMessage}>Select a call to inspect comparison details.</div>
+          )}
+
+          {loadingDetail && (
+            <div style={styles.panelMessage}>Loading call detail...</div>
+          )}
+
+          {detailError && !loadingDetail && (
+            <div style={{ ...styles.panelMessage, color: '#721c24' }}>Error: {detailError}</div>
+          )}
+
+          {detail && !loadingDetail && (
+            <>
+              <EnforcementResultPanel result={detail.enforcement_result} showTopDivider={false} />
+
+              <div style={styles.sectionDivider}>
+                {!detail.call?.intent_event ? (
+                  <div style={styles.panelMessage}>
+                    Detailed intent vs policy-anchor comparison is unavailable for this legacy run (missing `call.intent_event`).
+                  </div>
+                ) : loadingPolicies ? (
+                  <div style={styles.panelMessage}>Loading policy anchors...</div>
+                ) : policyError ? (
+                  <div style={{ ...styles.panelMessage, color: '#721c24' }}>Error: {policyError}</div>
+                ) : Array.isArray(detail.enforcement_result?.evidence) && detail.enforcement_result.evidence.length > 0 ? (
+                  <>
+                    <div style={styles.panelTitle}>Intent vs Policy Anchors</div>
+                    {detail.enforcement_result.evidence.map((entry, idx) => {
+                      const policy = policyById[entry.boundary_id];
+                      const policyMatch = policy?.match ?? {};
+                      const similarities = Array.isArray(entry.similarities) ? entry.similarities : [0, 0, 0, 0];
+                      const thresholds = Array.isArray(entry.thresholds) ? entry.thresholds : [0, 0, 0, 0];
+                      return (
+                        <div key={`${entry.boundary_id || 'policy'}-${idx}`} style={styles.comparisonCard}>
+                          <div style={styles.comparisonHeader}>
+                            <div style={styles.comparisonName}>
+                              {entry.boundary_name || policy?.name || entry.boundary_id || 'Policy'}
+                            </div>
+                            <div style={styles.comparisonStatus}>
+                              {entry.decision === 1 ? 'matched' : 'no match'}
+                            </div>
+                          </div>
+
+                          {SLICE_COMPARISON_CONFIG.map((slice, sliceIdx) => {
+                            const sim = similarities[sliceIdx] ?? 0;
+                            const thr = thresholds[sliceIdx] ?? 0;
+                            const passes = sim >= thr;
+                            return (
+                              <div key={slice.label} style={styles.sliceCard}>
+                                <div style={styles.sliceLabel}>{slice.label}</div>
+                                <RunAnchorComparisonPanel
+                                  intentValue={detail.call.intent_event?.[slice.intentKey]}
+                                  policyAnchorValue={policyMatch[slice.anchorKey]}
+                                />
+                                <div style={styles.sliceMetricsRow}>
+                                  <div style={styles.sliceMetrics}>
+                                    Similarity {sim.toFixed(2)} / Threshold {thr.toFixed(2)}
+                                  </div>
+                                  <span style={styles.sliceCheck(passes)}>{passes ? '✓' : '✗'}</span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })}
+                  </>
+                ) : (
+                  <div style={styles.panelMessage}>No policy evidence available for comparison.</div>
+                )}
+              </div>
+            </>
+          )}
+        </div>
       </div>
-
-      {loadingDetail && (
-        <div style={{ marginTop: 16, fontSize: 13, color: '#888' }}>Loading session detail...</div>
-      )}
-
-      {selectedSession && !loadingDetail && (
-        <SessionDetail session={selectedSession} onClose={() => { setSelectedSession(null); setSelectedRowId(null); }} />
-      )}
     </div>
   );
 }

@@ -6,7 +6,7 @@ definitions from rule_installation.proto.
 """
 
 from pydantic import BaseModel, Field
-from typing import Any
+from typing import Any, Optional
 
 
 class SessionSummary(BaseModel):
@@ -62,10 +62,10 @@ class TelemetrySessionsResponse(BaseModel):
 class SessionDetail(BaseModel):
     """
     Full details for a specific enforcement session.
-    
+
     Contains the complete session data including all rule evaluations,
     intent details, and timing information.
-    
+
     Example:
         {
             "session": {
@@ -78,3 +78,58 @@ class SessionDetail(BaseModel):
         }
     """
     session: dict[str, Any] = Field(..., description="Full session data as JSON object")
+
+
+class CallSummary(BaseModel):
+    """
+    Summary of a single enforce_calls row.
+
+    Example:
+        {
+            "call_id": "abc123",
+            "agent_id": "agent_1",
+            "ts_ms": 1700000000000,
+            "decision": "ALLOW",
+            "op": "tool_call",
+            "t": "web_search"
+        }
+    """
+    call_id: str = Field(..., description="Unique call identifier")
+    agent_id: str = Field(..., description="Agent that triggered the call")
+    ts_ms: int = Field(..., description="Unix timestamp in milliseconds")
+    decision: str = Field(..., description="Enforcement decision")
+    op: Optional[str] = Field(None, description="Operation type")
+    t: Optional[str] = Field(None, description="Tool name or action type")
+    is_dry_run: bool = Field(False, description="Whether this was a dry-run call")
+
+
+class CallsResponse(BaseModel):
+    """
+    Response for GET /telemetry/calls endpoint.
+
+    Example:
+        {
+            "calls": [...],
+            "total_count": 120,
+            "limit": 50,
+            "offset": 0
+        }
+    """
+    calls: list[CallSummary] = Field(..., description="List of call summaries")
+    total_count: int = Field(..., description="Total number of matching calls")
+    limit: int = Field(..., description="Pagination limit")
+    offset: int = Field(..., description="Pagination offset")
+
+
+class CallDetail(BaseModel):
+    """
+    Full detail for a single enforce_calls row.
+
+    Example:
+        {
+            "call": {...},
+            "enforcement_result": {...}
+        }
+    """
+    call: CallSummary = Field(..., description="Call summary fields")
+    enforcement_result: dict = Field(..., description="Deserialized enforcement result")

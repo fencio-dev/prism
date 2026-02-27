@@ -12,6 +12,7 @@ from fastmcp.exceptions import ToolError
 from pydantic import BaseModel, Field, ValidationError
 
 from app.models import AgentIdentity, IntentEvent
+from app.services.param_canonicalizer import canonicalize_params
 
 from .auth import authenticate_request
 from .app import mcp
@@ -111,6 +112,13 @@ async def send_intent(
 
     tool_context = _resolve_tool_context(context)
 
+    # Build p from tool_params so the data slice encodes actual query content
+    tool_params = tool_context.get("tool_params")
+    if tool_params and isinstance(tool_params, dict):
+        p_value: Optional[str] = canonicalize_params(tool_params)
+    else:
+        p_value = data.get("description") if isinstance(data, dict) else None
+
     try:
         event = IntentEvent(
             event_type="tool_call",
@@ -124,7 +132,7 @@ async def send_intent(
             ),
             op=action,
             t=resource.get("name") or resource.get("type") or str(resource),
-            p=data.get("description") if isinstance(data, dict) else None,
+            p=p_value,
             params=tool_context if tool_context else None,
         )
     except ValidationError as exc:

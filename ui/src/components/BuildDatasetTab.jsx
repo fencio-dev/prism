@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { fetchCalls, deleteCalls, fetchCallDetail } from '../api/telemetry';
 import { getPolicy } from '../api/policies';
-
-const STORAGE_KEY = 'guard:ui:enforcement:dry-run-history';
+import RunAnchorComparisonPanel from './RunAnchorComparisonPanel';
 
 const BADGE_COLORS = {
   ALLOW:   { background: '#d4edda', color: '#155724' },
@@ -26,25 +26,52 @@ function formatTs(ts) {
 }
 
 export default function BuildDatasetTab() {
-  const [runs, setRuns] = useState([]);
-  const [selectedRun, setSelectedRun] = useState(null);
+  const [calls, setCalls] = useState([]);
+  const [totalCount, setTotalCount] = useState(0);
+  const [selectedCall, setSelectedCall] = useState(null);
+  const [selectedSummary, setSelectedSummary] = useState(null);
 
-  useEffect(() => {
+  const poll = useCallback(async () => {
     try {
-      const raw = sessionStorage.getItem(STORAGE_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw);
-      if (parsed && Array.isArray(parsed.runs)) {
-        setRuns(parsed.runs);
-      }
+      const data = await fetchCalls({ limit: 50, offset: 0 });
+      setCalls(data?.calls ?? []);
+      setTotalCount(data?.total_count ?? 0);
     } catch {
-      // malformed storage — leave runs empty
+      // fail soft — keep existing data
     }
   }, []);
 
+  useEffect(() => {
+    poll();
+    const id = setInterval(poll, 5000);
+    return () => clearInterval(id);
+  }, [poll]);
+
+  async function handleRowClick(c) {
+    setSelectedSummary(c);
+    setSelectedCall(null);
+    try {
+      const detail = await fetchCallDetail(c.call_id);
+      // Merge summary fields (including is_dry_run) with the detail's call + enforcement_result
+      setSelectedCall({ ...detail.call, enforcement_result: detail.enforcement_result });
+    } catch {
+      // fall back to summary with no evidence
+      setSelectedCall(c);
+    }
+  }
+
+  async function handleClearAll() {
+    if (!window.confirm('Delete all calls? This cannot be undone.')) return;
+    await deleteCalls();
+    setCalls([]);
+    setTotalCount(0);
+    setSelectedCall(null);
+    setSelectedSummary(null);
+    poll();
+  }
+
   return (
     <div style={{
-      margin: -28,
       height: 'calc(100vh - 120px)',
       display: 'flex',
       overflow: 'hidden',
@@ -69,22 +96,31 @@ export default function BuildDatasetTab() {
           fontWeight: 600,
           color: '#333',
           letterSpacing: 0.2,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
         }}>
-          Recent Runs
+          <span>Recent Calls <span style={{ fontWeight: 400, color: '#999', fontSize: 11 }}>{totalCount}</span></span>
+          <button
+            onClick={handleClearAll}
+            style={{ fontSize: 11, padding: '2px 8px', cursor: 'pointer', border: '1px solid #ddd', borderRadius: 3, background: '#fff', color: '#555' }}
+          >
+            Clear All
+          </button>
         </div>
 
-        {runs.length === 0 ? (
+        {calls.length === 0 ? (
           <div style={{ padding: '20px 14px', fontSize: 13, color: '#999' }}>
-            No recent runs found.
+            No recent calls found.
           </div>
         ) : (
-          runs.map((run, idx) => {
-            const isSelected = selectedRun === run;
-            const badgeColors = BADGE_COLORS[run.decision] ?? BADGE_COLORS.DEFER;
+          calls.map((c) => {
+            const isSelected = selectedSummary?.call_id === c.call_id;
+            const badgeColors = BADGE_COLORS[c.decision] ?? BADGE_COLORS.DEFER;
             return (
               <div
-                key={idx}
-                onClick={() => setSelectedRun(run)}
+                key={c.call_id}
+                onClick={() => handleRowClick(c)}
                 style={{
                   padding: '9px 12px',
                   borderBottom: '1px solid #eee',
@@ -93,8 +129,21 @@ export default function BuildDatasetTab() {
                   borderLeft: isSelected ? '3px solid #2563eb' : '3px solid transparent',
                 }}
               >
-                <div style={{ fontSize: 11, color: '#888', marginBottom: 3 }}>
-                  {formatTs(run.ts)}
+                <div style={{ fontSize: 11, color: '#888', marginBottom: 3, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  {formatTs(c.ts_ms)}
+                  {c.is_dry_run && (
+                    <span style={{
+                      fontSize: 9,
+                      fontWeight: 600,
+                      padding: '1px 5px',
+                      borderRadius: 3,
+                      background: '#e8f0fe',
+                      color: '#1a56db',
+                      letterSpacing: 0.3,
+                    }}>
+                      dry run
+                    </span>
+                  )}
                 </div>
                 <div style={{
                   fontSize: 12,
@@ -104,7 +153,7 @@ export default function BuildDatasetTab() {
                   whiteSpace: 'nowrap',
                   marginBottom: 2,
                 }}>
-                  {truncate(run.formSnapshot?.op, 36)}
+                  {truncate(c.op, 36)}
                 </div>
                 <div style={{
                   fontSize: 11,
@@ -114,7 +163,7 @@ export default function BuildDatasetTab() {
                   whiteSpace: 'nowrap',
                   marginBottom: 5,
                 }}>
-                  {truncate(run.formSnapshot?.t, 36)}
+                  {truncate(c.t, 36)}
                 </div>
                 <span style={{
                   fontSize: 10,
@@ -124,7 +173,7 @@ export default function BuildDatasetTab() {
                   letterSpacing: 0.3,
                   ...badgeColors,
                 }}>
-                  {run.decision ?? '—'}
+                  {c.decision ?? '—'}
                 </span>
               </div>
             );
@@ -134,7 +183,7 @@ export default function BuildDatasetTab() {
 
       {/* Right panel — details or placeholder */}
       <div style={{ flex: 1, overflowY: 'auto', height: '100%', padding: '20px 24px' }}>
-        {selectedRun === null ? (
+        {selectedCall === null ? (
           <div style={{
             display: 'flex',
             alignItems: 'center',
@@ -143,10 +192,10 @@ export default function BuildDatasetTab() {
             color: '#aaa',
             fontSize: 14,
           }}>
-            Select a run to compare slices
+            Select a call to compare slices
           </div>
         ) : (
-          <RunDetail run={selectedRun} />
+          <RunDetail call={selectedCall} />
         )}
       </div>
     </div>
@@ -174,7 +223,7 @@ function worstSliceIndex(similarities, thresholds) {
   return worstIdx;
 }
 
-function exportFeedbackAsJSONL(run, evidence, policies, snap, feedback) {
+function exportFeedbackAsJSONL(call, evidence, policies, snap, feedback) {
   const entries = [];
 
   for (const item of evidence) {
@@ -188,8 +237,8 @@ function exportFeedbackAsJSONL(run, evidence, policies, snap, feedback) {
       if (!entry || entry.score === null || entry.score === undefined) continue;
 
       entries.push({
-        run_id: run.result?.request_id ?? run.ts,
-        ts: run.ts,
+        call_id: call.call_id,
+        ts: call.ts_ms,
         boundary_id: item.boundary_id,
         boundary_name: item.boundary_name,
         slice_index: sliceIdx,
@@ -285,24 +334,16 @@ function SliceCell({ intent, anchor, similarity, threshold, isWorst, feedbackKey
   return (
     <td style={{
       padding: '10px 12px',
-      border: '1px solid #eee',
+      borderTop: isWorst ? '2px solid #f59e0b' : '1px solid #eee',
+      borderRight: '1px solid #eee',
+      borderBottom: '1px solid #eee',
+      borderLeft: '1px solid #eee',
       verticalAlign: 'top',
-      background: isWorst ? '#fffbeb' : 'transparent',
+      background: 'transparent',
       wordBreak: 'break-word',
       overflowWrap: 'break-word',
     }}>
-      <div style={{ marginBottom: 4 }}>
-        <span style={{ fontSize: 10, color: '#999', display: 'block', marginBottom: 2 }}>intent:</span>
-        <span style={{ fontSize: 11, color: '#333', wordBreak: 'break-word' }}>
-          {intent || '—'}
-        </span>
-      </div>
-      <div style={{ marginBottom: 6 }}>
-        <span style={{ fontSize: 10, color: '#999', display: 'block', marginBottom: 2 }}>anchor:</span>
-        <span style={{ fontSize: 11, color: '#555', wordBreak: 'break-word' }}>
-          {anchor || '—'}
-        </span>
-      </div>
+      <RunAnchorComparisonPanel intentValue={intent} policyAnchorValue={anchor} />
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
         <span style={{ fontWeight: 600, color: '#1a1a1a' }}>
           {similarity.toFixed(2)}
@@ -377,14 +418,21 @@ function SliceCell({ intent, anchor, similarity, threshold, isWorst, feedbackKey
   );
 }
 
-function RunDetail({ run }) {
+function RunDetail({ call }) {
   const [policies, setPolicies] = useState({});
   const [loading, setLoading] = useState(true);
   const [feedback, setFeedback] = useState({});
 
-  const snap = run.formSnapshot ?? {};
-  const evidence = run.result?.evidence ?? [];
-  const badgeColors = BADGE_COLORS[run.decision] ?? BADGE_COLORS.DEFER;
+  // Build a snap-like object from call fields for slice intent lookup.
+  // p and ctx are not top-level DB columns — they live inside intent_event.
+  const snap = {
+    op: call.op ?? call.intent_event?.op ?? '',
+    t:  call.t  ?? call.intent_event?.t  ?? '',
+    p:  call.intent_event?.p ?? '',
+    ctxInitialRequest: call.intent_event?.ctx?.initial_request ?? '',
+  };
+  const evidence = call.enforcement_result?.evidence ?? [];
+  const badgeColors = BADGE_COLORS[call.decision] ?? BADGE_COLORS.DEFER;
 
   useEffect(() => {
     setPolicies({});
@@ -408,7 +456,7 @@ function RunDetail({ run }) {
       setPolicies(map);
       setLoading(false);
     });
-  }, [run]);
+  }, [call]);
 
   const hasFeedback = Object.values(feedback).some(f => f?.score !== null && f?.score !== undefined);
 
@@ -418,7 +466,7 @@ function RunDetail({ run }) {
       <div style={{ marginBottom: 18, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           <span style={{ fontSize: 12, color: '#888' }}>
-            {run.ts ? new Date(run.ts).toLocaleString() : '—'}
+            {call.ts_ms ? new Date(call.ts_ms).toLocaleString() : '—'}
           </span>
           <span style={{
             fontSize: 11,
@@ -428,8 +476,21 @@ function RunDetail({ run }) {
             letterSpacing: 0.3,
             ...badgeColors,
           }}>
-            {run.decision ?? '—'}
+            {call.decision ?? '—'}
           </span>
+          {call.is_dry_run && (
+            <span style={{
+              fontSize: 10,
+              fontWeight: 600,
+              padding: '1px 6px',
+              borderRadius: 3,
+              background: '#e8f0fe',
+              color: '#1a56db',
+              letterSpacing: 0.3,
+            }}>
+              dry run
+            </span>
+          )}
           {snap.op && (
             <span style={{ fontSize: 12, color: '#444', fontFamily: 'monospace', background: '#f5f5f5', padding: '2px 6px', borderRadius: 3 }}>
               {snap.op}
@@ -459,7 +520,7 @@ function RunDetail({ run }) {
             Reset All
           </button>
           <button
-            onClick={() => exportFeedbackAsJSONL(run, evidence, policies, snap, feedback)}
+            onClick={() => exportFeedbackAsJSONL(call, evidence, policies, snap, feedback)}
             disabled={!hasFeedback}
             style={{
               border: '1px solid #ccc',
