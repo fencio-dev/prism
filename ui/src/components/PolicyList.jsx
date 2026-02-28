@@ -1,6 +1,18 @@
 import { useState, useEffect } from 'react';
+import { ListFilter, ShieldPlus } from 'lucide-react';
 import { fetchPolicies, deletePolicy, togglePolicyStatus } from '../api/policies';
 import PolicyForm from './PolicyForm';
+import PrismEmptyState from './PrismEmptyState';
+import { Badge } from './ui/badge';
+import { Switch } from './ui/switch';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from './ui/table';
 
 function formatDate(timestamp) {
   return new Date(timestamp * 1000).toLocaleDateString(undefined, {
@@ -10,185 +22,19 @@ function formatDate(timestamp) {
   });
 }
 
-const styles = {
-  toolbar: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 16,
-  },
-  count: {
-    fontSize: 14,
-    color: '#555',
-  },
-  addButton: {
-    fontSize: 13,
-    padding: '6px 14px',
-    border: '1px solid #1a1a1a',
-    borderRadius: 4,
-    background: '#1a1a1a',
-    color: '#fff',
-    cursor: 'pointer',
-  },
-  toolbarActions: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 10,
-  },
-  filterSelect: {
-    fontSize: 13,
-    padding: '6px 8px',
-    border: '1px solid #c8c8c8',
-    borderRadius: 4,
-    background: '#fff',
-    color: '#333',
-  },
-  table: {
-    width: '100%',
-    borderCollapse: 'collapse',
-    fontSize: 14,
-  },
-  th: {
-    textAlign: 'left',
-    padding: '8px 12px',
-    borderBottom: '2px solid #ddd',
-    fontWeight: 600,
-    color: '#333',
-    whiteSpace: 'nowrap',
-  },
-  td: {
-    padding: '8px 12px',
-    borderBottom: '1px solid #eee',
-    verticalAlign: 'middle',
-  },
-  statusToggle: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: 6,
-    cursor: 'pointer',
-    background: 'none',
-    border: 'none',
-    padding: 0,
-    font: 'inherit',
-    fontSize: 13,
-  },
-  statusActive: {
-    color: '#2d8a4e',
-    fontWeight: 500,
-  },
-  statusDisabled: {
-    color: '#999',
-  },
-  deleteButton: {
-    fontSize: 12,
-    padding: '4px 10px',
-    border: '1px solid #e0a0a0',
-    borderRadius: 4,
-    background: '#fdf2f2',
-    color: '#c0392b',
-    cursor: 'pointer',
-  },
-  deleteButtonDisabled: {
-    fontSize: 12,
-    padding: '4px 10px',
-    border: '1px solid #ddd',
-    borderRadius: 4,
-    background: '#f5f5f5',
-    color: '#aaa',
-    cursor: 'not-allowed',
-  },
-  editButton: {
-    fontSize: 12,
-    padding: '4px 10px',
-    border: '1px solid #b0c4de',
-    borderRadius: 4,
-    background: '#f0f4fa',
-    color: '#2255a4',
-    cursor: 'pointer',
-    marginRight: 6,
-  },
-  viewButton: {
-    fontSize: 12,
-    padding: '4px 10px',
-    border: '1px solid #c8c8c8',
-    borderRadius: 4,
-    background: '#f5f5f5',
-    color: '#444',
-    cursor: 'pointer',
-    marginRight: 6,
-  },
-  modalOverlay: {
-    position: 'fixed',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    background: 'rgba(0,0,0,0.35)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 1000,
-  },
-  modalBox: {
-    background: '#fff',
-    borderRadius: 6,
-    padding: '28px 32px',
-    maxWidth: 560,
-    width: '100%',
-    maxHeight: '80vh',
-    overflowY: 'auto',
-    boxShadow: '0 4px 24px rgba(0,0,0,0.15)',
-  },
-  modalTitle: {
-    fontSize: 16,
-    fontWeight: 600,
-    marginBottom: 20,
-    color: '#1a1a1a',
-  },
-  modalGrid: {
-    display: 'grid',
-    gridTemplateColumns: '160px 1fr',
-    gap: '8px 16px',
-    fontSize: 13,
-  },
-  modalLabel: {
-    color: '#666',
-    fontWeight: 500,
-    paddingTop: 1,
-  },
-  modalValue: {
-    color: '#1a1a1a',
-    wordBreak: 'break-word',
-  },
-  modalDivider: {
-    gridColumn: '1 / -1',
-    borderTop: '1px solid #eee',
-    margin: '8px 0',
-  },
-  modalClose: {
-    marginTop: 24,
-    fontSize: 13,
-    padding: '6px 16px',
-    border: '1px solid #c8c8c8',
-    borderRadius: 4,
-    background: '#f5f5f5',
-    color: '#333',
-    cursor: 'pointer',
-  },
-  empty: {
-    textAlign: 'center',
-    padding: '48px 0',
-    color: '#888',
-  },
-  message: {
-    color: '#888',
-    fontSize: 14,
-  },
-  error: {
-    color: '#c0392b',
-    fontSize: 14,
-  },
-};
+function getStatusBadgeClass(status) {
+  const normalized = (status || '').toLowerCase();
+
+  if (normalized === 'active') {
+    return 'border-green-600/30 bg-green-100 text-green-700';
+  }
+
+  if (normalized === 'disabled') {
+    return 'border-stone-400/40 bg-stone-100 text-stone-600';
+  }
+
+  return 'border-sky-600/30 bg-sky-100 text-sky-700';
+}
 
 export default function PolicyList() {
   const [policies, setPolicies] = useState([]);
@@ -207,6 +53,16 @@ export default function PolicyList() {
     }
     return (policy.status || '').toLowerCase() === selectedStatus;
   });
+
+  const hasFilters = selectedStatus !== 'all';
+  const emptyTitle = hasFilters ? 'No matching policies' : 'No policies yet';
+  const emptyDescription = hasFilters
+    ? 'No policies match the selected status filter.'
+    : 'Create your first policy to begin enforcing guardrails for agent actions.';
+  const emptyActionLabel = hasFilters ? 'Clear Filter' : 'Add Policy';
+  const emptyAction = hasFilters
+    ? () => setSelectedStatus('all')
+    : () => setShowForm(true);
 
   async function load() {
     setLoading(true);
@@ -258,14 +114,14 @@ export default function PolicyList() {
   }
 
   return (
-    <div>
-      <div style={styles.toolbar}>
-        <span style={styles.count}>
+    <div className="px-6 py-6">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <span className="text-sm text-[var(--prism-text-secondary)]">
           {loading ? '' : `${filteredPolicies.length} ${filteredPolicies.length === 1 ? 'policy' : 'policies'}`}
         </span>
-        <div style={styles.toolbarActions}>
+        <div className="flex items-center gap-2">
           <select
-            style={styles.filterSelect}
+            className="h-8 rounded-sm border border-[var(--prism-border-default)] bg-[var(--prism-bg-elevated)] px-3 text-sm text-[var(--prism-text-primary)] outline-none transition-colors focus:border-[var(--prism-accent)]/60 focus:ring-1 focus:ring-[var(--prism-accent)]/30"
             value={selectedStatus}
             onChange={(e) => setSelectedStatus(e.target.value)}
             aria-label="Filter policies by status"
@@ -274,7 +130,10 @@ export default function PolicyList() {
             <option value="active">Active</option>
             <option value="disabled">Disabled</option>
           </select>
-          <button style={styles.addButton} onClick={() => setShowForm(true)}>
+          <button
+            className="inline-flex h-8 items-center justify-center rounded border border-[var(--prism-accent)]/40 bg-[var(--prism-accent)] px-3 text-sm font-semibold text-white transition-colors hover:bg-[#b75a3b] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--prism-accent)]/40 active:bg-[#a65135]"
+            onClick={() => setShowForm(true)}
+          >
             Add Policy
           </button>
         </div>
@@ -289,192 +148,216 @@ export default function PolicyList() {
       )}
 
       {viewPolicy && (
-        <div style={styles.modalOverlay} onClick={() => setViewPolicy(null)}>
-          <div style={styles.modalBox} onClick={(e) => e.stopPropagation()}>
-            <div style={styles.modalTitle}>Policy Details</div>
-            <div style={styles.modalGrid}>
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(39,36,30,0.42)] px-4"
+          onClick={() => setViewPolicy(null)}
+        >
+          <div
+            className="max-h-[80vh] w-full max-w-[560px] overflow-y-auto rounded border border-[var(--prism-border-default)] bg-[var(--prism-bg-surface)] p-6 shadow"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-5 text-lg font-semibold text-[var(--prism-text-primary)]">Policy Details</div>
+            <div className="grid grid-cols-[160px_1fr] gap-x-4 gap-y-2 text-sm">
 
-              <span style={styles.modalLabel}>ID</span>
-              <span style={styles.modalValue}>{viewPolicy.id}</span>
+              <span className="pt-px text-xs font-medium uppercase tracking-wider text-[var(--prism-text-secondary)]">ID</span>
+              <span className="break-words font-mono text-sm text-[var(--prism-text-primary)]">{viewPolicy.id}</span>
 
-              <span style={styles.modalLabel}>Name</span>
-              <span style={styles.modalValue}>{viewPolicy.name}</span>
+              <span className="pt-px text-xs font-medium uppercase tracking-wider text-[var(--prism-text-secondary)]">Name</span>
+              <span className="break-words text-[var(--prism-text-primary)]">{viewPolicy.name}</span>
 
-              <span style={styles.modalLabel}>Tenant ID</span>
-              <span style={styles.modalValue}>{viewPolicy.tenant_id ?? '—'}</span>
+              <span className="pt-px text-xs font-medium uppercase tracking-wider text-[var(--prism-text-secondary)]">Tenant ID</span>
+              <span className="break-words font-mono text-sm text-[var(--prism-text-primary)]">{viewPolicy.tenant_id ?? '—'}</span>
 
-              <span style={styles.modalLabel}>Status</span>
-              <span style={styles.modalValue}>{viewPolicy.status}</span>
+              <span className="pt-px text-xs font-medium uppercase tracking-wider text-[var(--prism-text-secondary)]">Status</span>
+              <span className="break-words text-[var(--prism-text-primary)]">{viewPolicy.status}</span>
 
-              <span style={styles.modalLabel}>Policy Type</span>
-              <span style={styles.modalValue}>{viewPolicy.policy_type ?? viewPolicy.type ?? '—'}</span>
+              <span className="pt-px text-xs font-medium uppercase tracking-wider text-[var(--prism-text-secondary)]">Policy Type</span>
+              <span className="break-words text-[var(--prism-text-primary)]">{viewPolicy.policy_type ?? viewPolicy.type ?? '—'}</span>
 
-              <span style={styles.modalLabel}>Priority</span>
-              <span style={styles.modalValue}>{viewPolicy.priority ?? '—'}</span>
+              <span className="pt-px text-xs font-medium uppercase tracking-wider text-[var(--prism-text-secondary)]">Priority</span>
+              <span className="break-words text-[var(--prism-text-primary)]">{viewPolicy.priority ?? '—'}</span>
 
-              <div style={styles.modalDivider} />
+              <div className="col-span-2 my-1 border-t border-[var(--prism-border-default)]" />
 
-              <span style={styles.modalLabel}>Match: Operation</span>
-              <span style={styles.modalValue}>{viewPolicy.match?.op ?? viewPolicy.match?.operation ?? '—'}</span>
+              <span className="pt-px text-xs font-medium uppercase tracking-wider text-[var(--prism-text-secondary)]">Match: Operation</span>
+              <span className="break-words text-[var(--prism-text-primary)]">{viewPolicy.match?.op ?? viewPolicy.match?.operation ?? '—'}</span>
 
-              <span style={styles.modalLabel}>Match: Target/Tool</span>
-              <span style={styles.modalValue}>{viewPolicy.match?.t ?? viewPolicy.match?.target_tool ?? viewPolicy.match?.tool ?? viewPolicy.match?.target ?? '—'}</span>
+              <span className="pt-px text-xs font-medium uppercase tracking-wider text-[var(--prism-text-secondary)]">Match: Target/Tool</span>
+              <span className="break-words text-[var(--prism-text-primary)]">{viewPolicy.match?.t ?? viewPolicy.match?.target_tool ?? viewPolicy.match?.tool ?? viewPolicy.match?.target ?? '—'}</span>
 
               {viewPolicy.match?.parameters && (
                 <>
-                  <span style={styles.modalLabel}>Match: Parameters</span>
-                  <span style={styles.modalValue}>{JSON.stringify(viewPolicy.match.parameters)}</span>
+                  <span className="pt-px text-xs font-medium uppercase tracking-wider text-[var(--prism-text-secondary)]">Match: Parameters</span>
+                  <span className="break-words font-mono text-sm text-[var(--prism-text-primary)]">{JSON.stringify(viewPolicy.match.parameters)}</span>
                 </>
               )}
 
               {viewPolicy.match?.risk_context && (
                 <>
-                  <span style={styles.modalLabel}>Match: Risk Context</span>
-                  <span style={styles.modalValue}>{JSON.stringify(viewPolicy.match.risk_context)}</span>
+                  <span className="pt-px text-xs font-medium uppercase tracking-wider text-[var(--prism-text-secondary)]">Match: Risk Context</span>
+                  <span className="break-words font-mono text-sm text-[var(--prism-text-primary)]">{JSON.stringify(viewPolicy.match.risk_context)}</span>
                 </>
               )}
 
-              <div style={styles.modalDivider} />
+              <div className="col-span-2 my-1 border-t border-[var(--prism-border-default)]" />
 
-              <span style={styles.modalLabel}>Threshold: Action</span>
-              <span style={styles.modalValue}>{viewPolicy.thresholds?.action ?? '—'}</span>
+              <span className="pt-px text-xs font-medium uppercase tracking-wider text-[var(--prism-text-secondary)]">Threshold: Action</span>
+              <span className="break-words font-mono text-sm text-[var(--prism-text-primary)]">{viewPolicy.thresholds?.action ?? '—'}</span>
 
-              <span style={styles.modalLabel}>Threshold: Resource</span>
-              <span style={styles.modalValue}>{viewPolicy.thresholds?.resource ?? '—'}</span>
+              <span className="pt-px text-xs font-medium uppercase tracking-wider text-[var(--prism-text-secondary)]">Threshold: Resource</span>
+              <span className="break-words font-mono text-sm text-[var(--prism-text-primary)]">{viewPolicy.thresholds?.resource ?? '—'}</span>
 
-              <span style={styles.modalLabel}>Threshold: Data</span>
-              <span style={styles.modalValue}>{viewPolicy.thresholds?.data ?? '—'}</span>
+              <span className="pt-px text-xs font-medium uppercase tracking-wider text-[var(--prism-text-secondary)]">Threshold: Data</span>
+              <span className="break-words font-mono text-sm text-[var(--prism-text-primary)]">{viewPolicy.thresholds?.data ?? '—'}</span>
 
-              <span style={styles.modalLabel}>Threshold: Risk</span>
-              <span style={styles.modalValue}>{viewPolicy.thresholds?.risk ?? '—'}</span>
+              <span className="pt-px text-xs font-medium uppercase tracking-wider text-[var(--prism-text-secondary)]">Threshold: Risk</span>
+              <span className="break-words font-mono text-sm text-[var(--prism-text-primary)]">{viewPolicy.thresholds?.risk ?? '—'}</span>
 
               {viewPolicy.weights && (
                 <>
-                  <div style={styles.modalDivider} />
-                  <span style={styles.modalLabel}>Weight: Action</span>
-                  <span style={styles.modalValue}>{viewPolicy.weights.action ?? '—'}</span>
+                  <div className="col-span-2 my-1 border-t border-[var(--prism-border-default)]" />
+                  <span className="pt-px text-xs font-medium uppercase tracking-wider text-[var(--prism-text-secondary)]">Weight: Action</span>
+                  <span className="break-words font-mono text-sm text-[var(--prism-text-primary)]">{viewPolicy.weights.action ?? '—'}</span>
 
-                  <span style={styles.modalLabel}>Weight: Resource</span>
-                  <span style={styles.modalValue}>{viewPolicy.weights.resource ?? '—'}</span>
+                  <span className="pt-px text-xs font-medium uppercase tracking-wider text-[var(--prism-text-secondary)]">Weight: Resource</span>
+                  <span className="break-words font-mono text-sm text-[var(--prism-text-primary)]">{viewPolicy.weights.resource ?? '—'}</span>
 
-                  <span style={styles.modalLabel}>Weight: Data</span>
-                  <span style={styles.modalValue}>{viewPolicy.weights.data ?? '—'}</span>
+                  <span className="pt-px text-xs font-medium uppercase tracking-wider text-[var(--prism-text-secondary)]">Weight: Data</span>
+                  <span className="break-words font-mono text-sm text-[var(--prism-text-primary)]">{viewPolicy.weights.data ?? '—'}</span>
 
-                  <span style={styles.modalLabel}>Weight: Risk</span>
-                  <span style={styles.modalValue}>{viewPolicy.weights.risk ?? '—'}</span>
+                  <span className="pt-px text-xs font-medium uppercase tracking-wider text-[var(--prism-text-secondary)]">Weight: Risk</span>
+                  <span className="break-words font-mono text-sm text-[var(--prism-text-primary)]">{viewPolicy.weights.risk ?? '—'}</span>
                 </>
               )}
 
               {viewPolicy.drift_threshold != null && (
                 <>
-                  <div style={styles.modalDivider} />
-                  <span style={styles.modalLabel}>Drift Threshold</span>
-                  <span style={styles.modalValue}>{viewPolicy.drift_threshold}</span>
+                   <div className="col-span-2 my-1 border-t border-[var(--prism-border-default)]" />
+                   <span className="pt-px text-xs font-medium uppercase tracking-wider text-[var(--prism-text-secondary)]">Drift Threshold</span>
+                   <span className="break-words font-mono text-sm text-[var(--prism-text-primary)]">{viewPolicy.drift_threshold}</span>
                 </>
               )}
 
               {viewPolicy.notes && (
                 <>
-                  <div style={styles.modalDivider} />
-                  <span style={styles.modalLabel}>Notes</span>
-                  <span style={styles.modalValue}>{viewPolicy.notes}</span>
+                   <div className="col-span-2 my-1 border-t border-[var(--prism-border-default)]" />
+                   <span className="pt-px text-xs font-medium uppercase tracking-wider text-[var(--prism-text-secondary)]">Notes</span>
+                   <span className="break-words text-[var(--prism-text-primary)]">{viewPolicy.notes}</span>
                 </>
               )}
 
-              <div style={styles.modalDivider} />
+              <div className="col-span-2 my-1 border-t border-[var(--prism-border-default)]" />
 
-              <span style={styles.modalLabel}>Created At</span>
-              <span style={styles.modalValue}>{formatDate(viewPolicy.created_at)}</span>
+              <span className="pt-px text-xs font-medium uppercase tracking-wider text-[var(--prism-text-secondary)]">Created At</span>
+              <span className="break-words text-[var(--prism-text-primary)]">{formatDate(viewPolicy.created_at)}</span>
 
-              <span style={styles.modalLabel}>Updated At</span>
-              <span style={styles.modalValue}>{viewPolicy.updated_at ? formatDate(viewPolicy.updated_at) : '—'}</span>
+              <span className="pt-px text-xs font-medium uppercase tracking-wider text-[var(--prism-text-secondary)]">Updated At</span>
+              <span className="break-words text-[var(--prism-text-primary)]">{viewPolicy.updated_at ? formatDate(viewPolicy.updated_at) : '—'}</span>
 
             </div>
-            <button style={styles.modalClose} onClick={() => setViewPolicy(null)}>Close</button>
+            <button
+              className="mt-6 inline-flex h-8 items-center justify-center rounded border border-[var(--prism-border-default)] px-3 text-sm text-[var(--prism-text-primary)] transition-colors hover:bg-[var(--prism-accent-subtle)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--prism-accent)]/40 active:bg-[rgba(201,100,66,0.2)]"
+              onClick={() => setViewPolicy(null)}
+            >
+              Close
+            </button>
           </div>
         </div>
       )}
 
-      {loading && <p style={styles.message}>Loading...</p>}
-      {error && <p style={styles.error}>{error}</p>}
+      {loading && <p className="text-sm text-[var(--prism-text-secondary)]">Loading...</p>}
+      {error && <p className="text-sm text-red-400">{error}</p>}
 
       {!loading && !error && filteredPolicies.length === 0 && (
-        <div style={styles.empty}>No policies found for this status.</div>
+        <div className="rounded border border-[var(--prism-border-default)] bg-[var(--prism-bg-surface)] px-4">
+          <PrismEmptyState
+            icon={hasFilters ? ListFilter : ShieldPlus}
+            title={emptyTitle}
+            description={emptyDescription}
+            actionLabel={emptyActionLabel}
+            onAction={emptyAction}
+          />
+        </div>
       )}
 
       {!loading && !error && filteredPolicies.length > 0 && (
-        <table style={styles.table}>
-          <thead>
-            <tr>
-              <th style={styles.th}>Name</th>
-              <th style={styles.th}>Status</th>
-              <th style={styles.th}>Type</th>
-              <th style={styles.th}>Created</th>
-              <th style={styles.th}>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
+        <div className="rounded border border-[var(--prism-border-default)] bg-[var(--prism-bg-surface)]">
+          <Table className="w-full text-sm">
+            <TableHeader className="bg-[var(--prism-bg-base)]">
+              <TableRow className="border-b border-[var(--prism-border-default)] hover:bg-transparent">
+                <TableHead className="whitespace-nowrap px-3 py-2.5 text-xs font-medium uppercase tracking-wider text-[var(--prism-text-secondary)]">Name</TableHead>
+                <TableHead className="whitespace-nowrap px-3 py-2.5 text-xs font-medium uppercase tracking-wider text-[var(--prism-text-secondary)]">Status</TableHead>
+                <TableHead className="whitespace-nowrap px-3 py-2.5 text-xs font-medium uppercase tracking-wider text-[var(--prism-text-secondary)]">Type</TableHead>
+                <TableHead className="whitespace-nowrap px-3 py-2.5 text-xs font-medium uppercase tracking-wider text-[var(--prism-text-secondary)]">Created</TableHead>
+                <TableHead className="whitespace-nowrap px-3 py-2.5 text-xs font-medium uppercase tracking-wider text-[var(--prism-text-secondary)]">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
             {filteredPolicies.map((policy) => {
               const isDeleting = deletingIds.has(policy.id);
               const isToggling = togglingIds.has(policy.id);
               const isActive = policy.status === 'active';
+
               return (
-                <tr key={policy.id}>
-                  <td style={styles.td}>{policy.name}</td>
-                  <td style={styles.td}>
-                    <button
-                      style={{
-                        ...styles.statusToggle,
-                        opacity: isToggling ? 0.5 : 1,
-                        cursor: isToggling ? 'wait' : 'pointer',
-                      }}
-                      disabled={isToggling}
-                      title={isActive ? 'Click to disable' : 'Click to enable'}
-                      onClick={() => handleToggle(policy.id)}
-                    >
-                      <span
-                        style={{
-                          width: 8,
-                          height: 8,
-                          borderRadius: '50%',
-                          background: isActive ? '#2d8a4e' : '#ccc',
-                          flexShrink: 0,
-                        }}
+                <TableRow
+                  key={policy.id}
+                  className="border-b border-[var(--prism-border-subtle)] transition-colors hover:bg-[rgba(201,100,66,0.08)]"
+                >
+                  <TableCell className="px-3 py-2.5 text-[var(--prism-text-primary)]">{policy.name}</TableCell>
+                  <TableCell className="px-3 py-2.5 text-[var(--prism-text-primary)]">
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        checked={isActive}
+                        disabled={isToggling}
+                        onCheckedChange={() => handleToggle(policy.id)}
+                        aria-label={isActive ? `Disable ${policy.name}` : `Enable ${policy.name}`}
+                        className={isToggling ? 'opacity-50' : ''}
                       />
-                      <span style={isActive ? styles.statusActive : styles.statusDisabled}>
+                      <Badge
+                        variant="outline"
+                        className={`rounded-full border px-2 py-0.5 text-xs font-medium uppercase tracking-wide ${getStatusBadgeClass(policy.status)}`}
+                      >
                         {policy.status}
-                      </span>
-                    </button>
-                  </td>
-                  <td style={styles.td}>{policy.policy_type ?? policy.type ?? '—'}</td>
-                  <td style={styles.td}>{formatDate(policy.created_at)}</td>
-                  <td style={{ ...styles.td, whiteSpace: 'nowrap' }}>
+                      </Badge>
+                    </div>
+                  </TableCell>
+                  <TableCell className="px-3 py-2.5 text-[var(--prism-text-primary)]">
+                    <Badge
+                      variant="outline"
+                      className="rounded-full border border-[var(--prism-border-default)] bg-[var(--prism-bg-base)] px-2 py-0.5 text-xs font-medium text-[var(--prism-text-secondary)]"
+                    >
+                      {policy.policy_type ?? policy.type ?? '—'}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="px-3 py-2.5 text-[var(--prism-text-primary)]">{formatDate(policy.created_at)}</TableCell>
+                  <TableCell className="whitespace-nowrap px-3 py-2.5 text-[var(--prism-text-primary)]">
                     <button
-                      style={styles.viewButton}
+                      className="mr-1.5 inline-flex h-7 items-center justify-center rounded border border-[var(--prism-border-default)] px-2.5 text-xs text-[var(--prism-text-primary)] transition-colors hover:bg-[var(--prism-accent-subtle)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--prism-accent)]/40 active:bg-[rgba(201,100,66,0.2)]"
                       onClick={() => setViewPolicy(policy)}
                     >
                       View
                     </button>
                     <button
-                      style={styles.editButton}
+                      className="mr-1.5 inline-flex h-7 items-center justify-center rounded border border-[var(--prism-accent)]/35 bg-[var(--prism-accent-subtle)] px-2.5 text-xs text-[var(--prism-accent)] transition-colors hover:bg-[rgba(201,100,66,0.2)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--prism-accent)]/40 active:bg-[rgba(201,100,66,0.24)] disabled:cursor-not-allowed disabled:opacity-40"
                       disabled={isDeleting}
                       onClick={() => { setSelectedPolicy(policy); setShowForm(true); }}
                     >
                       Edit
                     </button>
                     <button
-                      style={isDeleting ? styles.deleteButtonDisabled : styles.deleteButton}
+                      className="inline-flex h-7 items-center justify-center rounded border border-red-500/35 bg-red-50 px-2.5 text-xs text-red-700 transition-colors hover:bg-red-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--prism-accent)]/40 active:bg-red-200 disabled:cursor-not-allowed disabled:opacity-40"
                       disabled={isDeleting}
                       onClick={() => handleDelete(policy.id)}
                     >
                       {isDeleting ? 'Deleting...' : 'Delete'}
                     </button>
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               );
             })}
-          </tbody>
-        </table>
+            </TableBody>
+          </Table>
+        </div>
       )}
     </div>
   );

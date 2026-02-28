@@ -7,29 +7,33 @@ import SuggestedIntentsPanel from './SuggestedIntentsPanel';
 
 const styles = {
   panel: {
-    border: '1px solid #ddd',
+    border: '1px solid var(--prism-border-default)',
     borderRadius: 6,
-    padding: 24,
+    padding: 20,
     marginBottom: 24,
-    background: '#fafafa',
+    background: 'var(--prism-bg-surface)',
   },
   panelTitle: {
-    fontSize: 15,
+    fontSize: 18,
     fontWeight: 600,
-    marginBottom: 20,
-    color: '#1a1a1a',
+    marginBottom: 16,
+    color: 'var(--prism-text-primary)',
   },
   fieldset: {
-    border: '1px solid #e8e8e8',
+    border: '1px solid var(--prism-border-strong)',
     borderRadius: 4,
-    padding: '16px 20px',
-    marginBottom: 16,
+    padding: '14px 16px 16px',
+    marginBottom: 14,
+    background: 'linear-gradient(180deg, rgba(255, 253, 249, 0.95), rgba(246, 241, 232, 0.9))',
+    boxShadow: '0 1px 2px rgba(39, 36, 30, 0.08)',
   },
   legend: {
-    fontSize: 13,
-    fontWeight: 600,
-    color: '#555',
+    fontSize: 11,
+    fontWeight: 500,
+    color: 'var(--prism-text-secondary)',
     padding: '0 6px',
+    letterSpacing: '0.08em',
+    textTransform: 'uppercase',
   },
   grid: {
     display: 'grid',
@@ -44,33 +48,7 @@ const styles = {
   label: {
     fontSize: 13,
     fontWeight: 500,
-    color: '#333',
-  },
-  input: {
-    fontSize: 13,
-    padding: '6px 10px',
-    border: '1px solid #ccc',
-    borderRadius: 4,
-    fontFamily: 'inherit',
-    background: '#fff',
-  },
-  select: {
-    fontSize: 13,
-    padding: '6px 10px',
-    border: '1px solid #ccc',
-    borderRadius: 4,
-    fontFamily: 'inherit',
-    background: '#fff',
-  },
-  textarea: {
-    fontSize: 13,
-    padding: '6px 10px',
-    border: '1px solid #ccc',
-    borderRadius: 4,
-    fontFamily: 'monospace',
-    background: '#fff',
-    minHeight: 80,
-    resize: 'vertical',
+    color: 'var(--prism-text-primary)',
   },
   footer: {
     display: 'flex',
@@ -80,49 +58,64 @@ const styles = {
   },
   submitButton: {
     fontSize: 13,
-    padding: '7px 18px',
+    padding: '7px 14px',
+    height: 32,
+    lineHeight: 1,
     border: 'none',
-    borderRadius: 4,
-    background: '#1a1a1a',
-    color: '#fff',
+    borderRadius: 6,
+    background: 'var(--prism-accent)',
+    color: '#ffffff',
     cursor: 'pointer',
     fontFamily: 'inherit',
+    fontWeight: 600,
   },
   submitButtonDisabled: {
     fontSize: 13,
-    padding: '7px 18px',
+    padding: '7px 14px',
+    height: 32,
+    lineHeight: 1,
     border: 'none',
-    borderRadius: 4,
-    background: '#aaa',
-    color: '#fff',
+    borderRadius: 6,
+    background: 'rgba(201,100,66,0.22)',
+    color: 'rgba(39,36,30,0.5)',
     cursor: 'not-allowed',
     fontFamily: 'inherit',
+    fontWeight: 600,
   },
   clearButton: {
     fontSize: 13,
-    padding: '7px 18px',
-    border: '1px solid #ccc',
-    borderRadius: 4,
-    background: '#fff',
-    color: '#333',
+    padding: '7px 14px',
+    height: 32,
+    lineHeight: 1,
+    border: '1px solid var(--prism-border-default)',
+    borderRadius: 6,
+    background: 'transparent',
+    color: 'var(--prism-text-primary)',
     cursor: 'pointer',
     fontFamily: 'inherit',
   },
   errorText: {
     fontSize: 13,
-    color: '#c0392b',
+    color: '#f87171',
     marginTop: 10,
   },
   inlineError: {
     fontSize: 12,
-    color: '#c0392b',
+    color: '#f87171',
     marginTop: 2,
   },
   hint: {
     display: 'block',
     fontSize: '11px',
-    color: '#888',
+    color: 'var(--prism-text-secondary)',
     marginTop: '3px',
+    lineHeight: '1.4',
+  },
+  fieldsetLead: {
+    display: 'block',
+    fontSize: '11px',
+    color: 'var(--prism-text-secondary)',
+    marginBottom: 12,
     lineHeight: '1.4',
   },
   labelRow: {
@@ -131,27 +124,45 @@ const styles = {
     gap: 8,
   },
   modeToggle: {
-    fontSize: 11,
-    color: '#888',
-    cursor: 'pointer',
-    userSelect: 'none',
+    display: 'inline-flex',
+    alignItems: 'center',
+    border: '1px solid var(--prism-border-default)',
+    borderRadius: 3,
+    overflow: 'hidden',
     marginLeft: 'auto',
   },
-  modeToggleActive: {
-    fontWeight: 700,
-    color: '#1a1a1a',
+  modeToggleButton: {
+    fontSize: 11,
+    fontWeight: 500,
+    lineHeight: 1,
+    border: 'none',
+    borderRight: '1px solid var(--prism-border-default)',
+    padding: '4px 8px',
+    background: 'transparent',
+    color: 'var(--prism-text-secondary)',
+    cursor: 'pointer',
   },
-  inputInvalid: {
-    fontSize: 13,
-    padding: '6px 10px',
-    border: '1px solid #c0392b',
-    borderRadius: 4,
-    fontFamily: 'inherit',
-    background: '#fff',
-    resize: 'vertical',
-    minHeight: 72,
+  modeToggleButtonLast: {
+    borderRight: 'none',
+  },
+  modeToggleActive: {
+    background: 'var(--prism-accent-subtle)',
+    color: 'var(--prism-accent)',
+    fontWeight: 600,
+  },
+  sectionLayout: {
+    display: 'flex',
+    gap: 28,
+    alignItems: 'flex-start',
+    flexWrap: 'wrap',
   },
 };
+
+const INPUT_CLASS = 'h-8 w-full rounded-sm border border-[var(--prism-border-default)] bg-[var(--prism-bg-elevated)] px-3 text-sm text-[var(--prism-text-primary)] outline-none transition-colors placeholder:text-[var(--prism-text-muted)] focus:border-[var(--prism-accent)]/60 focus:ring-1 focus:ring-[var(--prism-accent)]/20';
+const INPUT_MONO_CLASS = `${INPUT_CLASS} font-mono tracking-tight`;
+const SELECT_CLASS = `${INPUT_CLASS} pr-8`;
+const TEXTAREA_CLASS = 'min-h-[80px] w-full resize-y rounded-sm border border-[var(--prism-border-default)] bg-[var(--prism-bg-elevated)] px-3 py-2 font-mono text-sm tracking-tight text-[var(--prism-text-primary)] outline-none transition-colors placeholder:text-[var(--prism-text-muted)] focus:border-[var(--prism-accent)]/60 focus:ring-1 focus:ring-[var(--prism-accent)]/20';
+const TEXTAREA_INVALID_CLASS = 'min-h-[80px] w-full resize-y rounded-sm border border-red-500/50 bg-[var(--prism-bg-elevated)] px-3 py-2 font-mono text-sm tracking-tight text-[var(--prism-text-primary)] outline-none ring-1 ring-red-500/20 transition-colors placeholder:text-[var(--prism-text-muted)] focus:border-red-400/70 focus:ring-red-500/30';
 
 const DEFAULT_STATE = {
   eventType: 'tool_call',
@@ -365,7 +376,7 @@ export default function EnforcementDryRunForm() {
   return (
     <div style={styles.panel}>
       <div style={styles.panelTitle}>Enforcement Dry Run</div>
-      <div style={{ display: 'flex', gap: 28, alignItems: 'flex-start' }}>
+      <div style={styles.sectionLayout}>
       <div style={{ flex: '1 1 0', minWidth: 0 }}>
       <form onSubmit={handleSubmit} noValidate>
 
@@ -374,7 +385,7 @@ export default function EnforcementDryRunForm() {
           <div style={styles.grid}>
             <div style={styles.field}>
               <label style={styles.label}>Event Type *</label>
-              <select style={styles.select} value={formState.eventType} onChange={(e) => setField('eventType', e.target.value)}>
+              <select className={SELECT_CLASS} value={formState.eventType} onChange={(e) => setField('eventType', e.target.value)}>
                 <option value="tool_call">tool_call</option>
                 <option value="reasoning">reasoning</option>
               </select>
@@ -382,7 +393,7 @@ export default function EnforcementDryRunForm() {
             </div>
             <div style={styles.field}>
               <label style={styles.label}>Actor Type *</label>
-              <select style={styles.select} value={formState.actorType} onChange={(e) => setField('actorType', e.target.value)}>
+              <select className={SELECT_CLASS} value={formState.actorType} onChange={(e) => setField('actorType', e.target.value)}>
                 <option value="user">user</option>
                 <option value="service">service</option>
                 <option value="llm">llm</option>
@@ -393,7 +404,7 @@ export default function EnforcementDryRunForm() {
             <div style={styles.field}>
               <label style={styles.label}>Agent ID *</label>
               <input
-                style={styles.input}
+                className={INPUT_MONO_CLASS}
                 type="text"
                 value={formState.agentId}
                 onChange={(e) => setField('agentId', e.target.value)}
@@ -405,7 +416,7 @@ export default function EnforcementDryRunForm() {
             <div style={styles.field}>
               <label style={styles.label}>Principal ID *</label>
               <input
-                style={styles.input}
+                className={INPUT_MONO_CLASS}
                 type="text"
                 value={formState.principalId}
                 onChange={(e) => setField('principalId', e.target.value)}
@@ -417,7 +428,7 @@ export default function EnforcementDryRunForm() {
             <div style={styles.field}>
               <label style={styles.label}>Service Account</label>
               <input
-                style={styles.input}
+                className={INPUT_MONO_CLASS}
                 type="text"
                 value={formState.serviceAccount}
                 onChange={(e) => setField('serviceAccount', e.target.value)}
@@ -428,7 +439,7 @@ export default function EnforcementDryRunForm() {
             <div style={styles.field}>
               <label style={styles.label}>Role Scope</label>
               <input
-                style={styles.input}
+                className={INPUT_MONO_CLASS}
                 type="text"
                 value={formState.roleScope}
                 onChange={(e) => setField('roleScope', e.target.value)}
@@ -441,33 +452,38 @@ export default function EnforcementDryRunForm() {
 
         <fieldset style={styles.fieldset}>
           <legend style={styles.legend}>Intent</legend>
-          <small style={{ ...styles.hint, marginBottom: 12 }}>These fields describe the action a = (op, t, p). They are embedded as semantic vectors and compared against policy match anchors.</small>
+          <small style={styles.fieldsetLead}>These fields describe the action a = (op, t, p). They are embedded as semantic vectors and compared against policy match anchors.</small>
           <div style={styles.grid}>
             <div style={styles.field}>
               <div style={styles.labelRow}>
                 <label style={styles.label}>Operation *</label>
                 <span style={styles.modeToggle}>
-                  <span
-                    style={!jsonMode.op ? styles.modeToggleActive : {}}
+                  <button
+                    type="button"
+                    style={{ ...styles.modeToggleButton, ...(!jsonMode.op ? styles.modeToggleActive : {}) }}
                     onClick={() => jsonMode.op && toggleJsonMode('op')}
-                  >NL</span>
-                  {' | '}
-                  <span
-                    style={jsonMode.op ? styles.modeToggleActive : {}}
+                  >
+                    NL
+                  </button>
+                  <button
+                    type="button"
+                    style={{ ...styles.modeToggleButton, ...styles.modeToggleButtonLast, ...(jsonMode.op ? styles.modeToggleActive : {}) }}
                     onClick={() => !jsonMode.op && toggleJsonMode('op')}
-                  >JSON</span>
+                  >
+                    JSON
+                  </button>
                 </span>
               </div>
               {jsonMode.op ? (
                 <textarea
-                  style={jsonErrors.op ? styles.inputInvalid : { ...styles.textarea }}
+                  className={jsonErrors.op ? TEXTAREA_INVALID_CLASS : TEXTAREA_CLASS}
                   value={formState.op}
                   onChange={(e) => handleAnchorChange('op', e.target.value)}
                   placeholder='e.g. {"action": "read", "scope": "users"}'
                 />
               ) : (
                 <input
-                  style={styles.input}
+                  className={INPUT_CLASS}
                   type="text"
                   value={formState.op}
                   onChange={(e) => setField('op', e.target.value)}
@@ -482,27 +498,32 @@ export default function EnforcementDryRunForm() {
               <div style={styles.labelRow}>
                 <label style={styles.label}>Target / Tool *</label>
                 <span style={styles.modeToggle}>
-                  <span
-                    style={!jsonMode.t ? styles.modeToggleActive : {}}
+                  <button
+                    type="button"
+                    style={{ ...styles.modeToggleButton, ...(!jsonMode.t ? styles.modeToggleActive : {}) }}
                     onClick={() => jsonMode.t && toggleJsonMode('t')}
-                  >NL</span>
-                  {' | '}
-                  <span
-                    style={jsonMode.t ? styles.modeToggleActive : {}}
+                  >
+                    NL
+                  </button>
+                  <button
+                    type="button"
+                    style={{ ...styles.modeToggleButton, ...styles.modeToggleButtonLast, ...(jsonMode.t ? styles.modeToggleActive : {}) }}
                     onClick={() => !jsonMode.t && toggleJsonMode('t')}
-                  >JSON</span>
+                  >
+                    JSON
+                  </button>
                 </span>
               </div>
               {jsonMode.t ? (
                 <textarea
-                  style={jsonErrors.t ? styles.inputInvalid : { ...styles.textarea }}
+                  className={jsonErrors.t ? TEXTAREA_INVALID_CLASS : TEXTAREA_CLASS}
                   value={formState.t}
                   onChange={(e) => handleAnchorChange('t', e.target.value)}
                   placeholder='e.g. {"tool": "postgres", "table": "users"}'
                 />
               ) : (
                 <input
-                  style={styles.input}
+                  className={INPUT_CLASS}
                   type="text"
                   value={formState.t}
                   onChange={(e) => setField('t', e.target.value)}
@@ -517,27 +538,32 @@ export default function EnforcementDryRunForm() {
               <div style={styles.labelRow}>
                 <label style={styles.label}>Parameters</label>
                 <span style={styles.modeToggle}>
-                  <span
-                    style={!jsonMode.p ? styles.modeToggleActive : {}}
+                  <button
+                    type="button"
+                    style={{ ...styles.modeToggleButton, ...(!jsonMode.p ? styles.modeToggleActive : {}) }}
                     onClick={() => jsonMode.p && toggleJsonMode('p')}
-                  >NL</span>
-                  {' | '}
-                  <span
-                    style={jsonMode.p ? styles.modeToggleActive : {}}
+                  >
+                    NL
+                  </button>
+                  <button
+                    type="button"
+                    style={{ ...styles.modeToggleButton, ...styles.modeToggleButtonLast, ...(jsonMode.p ? styles.modeToggleActive : {}) }}
                     onClick={() => !jsonMode.p && toggleJsonMode('p')}
-                  >JSON</span>
+                  >
+                    JSON
+                  </button>
                 </span>
               </div>
               {jsonMode.p ? (
                 <textarea
-                  style={jsonErrors.p ? styles.inputInvalid : { ...styles.textarea }}
+                  className={jsonErrors.p ? TEXTAREA_INVALID_CLASS : TEXTAREA_CLASS}
                   value={formState.p}
                   onChange={(e) => handleAnchorChange('p', e.target.value)}
                   placeholder='e.g. {"columns": ["email", "name"]}'
                 />
               ) : (
                 <input
-                  style={styles.input}
+                  className={INPUT_CLASS}
                   type="text"
                   value={formState.p}
                   onChange={(e) => setField('p', e.target.value)}
@@ -552,12 +578,12 @@ export default function EnforcementDryRunForm() {
 
         <fieldset style={styles.fieldset}>
           <legend style={styles.legend}>Context</legend>
-          <small style={{ ...styles.hint, marginBottom: 12 }}>Session context ctx provides accumulated signals that influence risk-sensitive policies (context_allow, context_deny, context_defer).</small>
+          <small style={styles.fieldsetLead}>Session context ctx provides accumulated signals that influence risk-sensitive policies (context_allow, context_deny, context_defer).</small>
           <div style={styles.grid}>
             <div style={styles.field}>
               <label style={styles.label}>Risk Context (NL)</label>
               <input
-                style={styles.input}
+                className={INPUT_CLASS}
                 type="text"
                 value={formState.ctxInitialRequest}
                 onChange={(e) => setField('ctxInitialRequest', e.target.value)}
@@ -568,7 +594,7 @@ export default function EnforcementDryRunForm() {
             <div style={styles.field}>
               <label style={styles.label}>Data Classifications (comma-separated)</label>
               <input
-                style={styles.input}
+                className={INPUT_CLASS}
                 type="text"
                 value={formState.ctxDataClassifications}
                 onChange={(e) => setField('ctxDataClassifications', e.target.value)}
@@ -579,7 +605,7 @@ export default function EnforcementDryRunForm() {
             <div style={styles.field}>
               <label style={styles.label}>Cumulative Drift (0.0–1.0)</label>
               <input
-                style={styles.input}
+                className={INPUT_CLASS}
                 type="number"
                 min="0"
                 max="1"
@@ -598,7 +624,7 @@ export default function EnforcementDryRunForm() {
           <div style={styles.field}>
             <label style={styles.label}>Params (JSON for MODIFY testing)</label>
             <textarea
-              style={styles.textarea}
+              className={TEXTAREA_CLASS}
               value={formState.paramsRaw}
               onChange={(e) => setField('paramsRaw', e.target.value)}
               placeholder='optional — e.g. {"limit": 100}'

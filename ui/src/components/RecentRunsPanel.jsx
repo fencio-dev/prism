@@ -1,23 +1,24 @@
-import { Pin, PinOff, Trash2 } from 'lucide-react';
+import { History, Pin, PinOff, Trash2 } from 'lucide-react';
+import PrismEmptyState from './PrismEmptyState';
 
 const BADGE_COLORS = {
-  ALLOW:   { background: '#d4edda', color: '#155724' },
-  DENY:    { background: '#f8d7da', color: '#721c24' },
-  MODIFY:  { background: '#fff3cd', color: '#856404' },
-  STEP_UP: { background: '#cce5ff', color: '#004085' },
-  DEFER:   { background: '#e2e3e5', color: '#383d41' },
+  ALLOW:   { background: 'rgba(34, 139, 69, 0.10)', color: '#1f8f4d', border: '1px solid rgba(34, 139, 69, 0.30)' },
+  DENY:    { background: 'rgba(194, 65, 65, 0.10)', color: '#c24141', border: '1px solid rgba(194, 65, 65, 0.30)' },
+  MODIFY:  { background: 'rgba(183, 121, 31, 0.12)', color: '#b7791f', border: '1px solid rgba(183, 121, 31, 0.32)' },
+  STEP_UP: { background: 'rgba(37, 99, 235, 0.10)', color: '#2563eb', border: '1px solid rgba(37, 99, 235, 0.30)' },
+  DEFER:   { background: 'rgba(83, 81, 70, 0.10)', color: '#6b6659', border: '1px solid rgba(83, 81, 70, 0.26)' },
 };
 
 const styles = {
   section: {
-    borderTop: '2px solid #e8e8e8',
+    borderTop: '1px solid var(--prism-border-default)',
     marginTop: 28,
     paddingTop: 24,
   },
   title: {
     fontSize: 14,
     fontWeight: 600,
-    color: '#333',
+    color: 'var(--prism-text-primary)',
     marginBottom: 12,
   },
   row: {
@@ -25,7 +26,7 @@ const styles = {
     alignItems: 'center',
     gap: 12,
     padding: '8px 10px',
-    borderBottom: '1px solid #eee',
+    borderBottom: '1px solid var(--prism-border-subtle)',
     cursor: 'pointer',
   },
   rowPinned: {
@@ -33,14 +34,14 @@ const styles = {
     alignItems: 'center',
     gap: 12,
     padding: '8px 10px',
-    borderBottom: '1px solid #eee',
+    borderBottom: '1px solid var(--prism-border-subtle)',
     cursor: 'pointer',
-    background: '#f5f9ff',
+    background: 'var(--prism-accent-subtle)',
   },
   opText: {
     fontSize: 13,
-    fontFamily: 'monospace',
-    color: '#1a1a1a',
+    fontFamily: '"JetBrains Mono", monospace',
+    color: 'var(--prism-text-primary)',
     flex: '0 0 auto',
     maxWidth: 280,
     overflow: 'hidden',
@@ -49,13 +50,13 @@ const styles = {
   },
   sep: {
     fontSize: 13,
-    color: '#bbb',
+    color: 'var(--prism-text-muted)',
     flex: '0 0 auto',
   },
   tText: {
     fontSize: 13,
-    fontFamily: 'monospace',
-    color: '#555',
+    fontFamily: '"JetBrains Mono", monospace',
+    color: 'var(--prism-text-secondary)',
     flex: '1 1 auto',
     overflow: 'hidden',
     textOverflow: 'ellipsis',
@@ -80,10 +81,10 @@ const styles = {
     display: 'inline-flex',
     alignItems: 'center',
     justifyContent: 'center',
-    color: '#687385',
+    color: 'var(--prism-text-secondary)',
   },
   pinButtonPinned: {
-    color: '#2563eb',
+    color: 'var(--prism-accent)',
   },
 };
 
@@ -93,7 +94,18 @@ function truncate(str, max) {
 }
 
 export default function RecentRunsPanel({ runs, pinnedIndex, onSelect, onPin, onClear }) {
-  if (!runs || runs.length === 0) return null;
+  if (!runs || runs.length === 0) {
+    return (
+      <div style={styles.section}>
+        <div style={styles.title}>Recent Runs</div>
+        <PrismEmptyState
+          icon={History}
+          title="No recent runs"
+          description="Dry run submissions will appear here for quick replay and pinning."
+        />
+      </div>
+    );
+  }
 
   // Build display list: pinned entry first (if any), then the rest in order.
   // Each item carries its original index so onPin receives the correct value.
@@ -114,7 +126,7 @@ export default function RecentRunsPanel({ runs, pinnedIndex, onSelect, onPin, on
         <div style={{ ...styles.title, marginBottom: 0 }}>Recent Runs</div>
         {onClear && (
           <button
-            style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4, color: '#999', fontSize: 12, padding: '2px 4px' }}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--prism-text-secondary)', fontSize: 12, padding: '2px 4px' }}
             title="Clear recent runs"
             onClick={onClear}
           >

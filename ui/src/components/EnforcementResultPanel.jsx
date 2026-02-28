@@ -1,16 +1,19 @@
+import { FlaskConical } from 'lucide-react';
+import PrismEmptyState from './PrismEmptyState';
+
 const SLICE_LABELS = ['action', 'resource', 'data', 'risk'];
 
 const BADGE_STYLES = {
-  ALLOW:   { background: '#d4edda', color: '#155724' },
-  DENY:    { background: '#f8d7da', color: '#721c24' },
-  MODIFY:  { background: '#fff3cd', color: '#856404' },
-  STEP_UP: { background: '#cce5ff', color: '#004085' },
-  DEFER:   { background: '#e2e3e5', color: '#383d41' },
+  ALLOW:   { background: 'rgba(34, 139, 69, 0.10)', color: '#1f8f4d', border: '1px solid rgba(34, 139, 69, 0.30)' },
+  DENY:    { background: 'rgba(194, 65, 65, 0.10)', color: '#c24141', border: '1px solid rgba(194, 65, 65, 0.30)' },
+  MODIFY:  { background: 'rgba(183, 121, 31, 0.12)', color: '#b7791f', border: '1px solid rgba(183, 121, 31, 0.32)' },
+  STEP_UP: { background: 'rgba(37, 99, 235, 0.10)', color: '#2563eb', border: '1px solid rgba(37, 99, 235, 0.30)' },
+  DEFER:   { background: 'rgba(83, 81, 70, 0.10)', color: '#6b6659', border: '1px solid rgba(83, 81, 70, 0.26)' },
 };
 
 const styles = {
   panel: {
-    borderTop: '2px solid #e8e8e8',
+    borderTop: '1px solid var(--prism-border-default)',
     marginTop: 28,
     paddingTop: 24,
   },
@@ -22,7 +25,7 @@ const styles = {
   panelTitle: {
     fontSize: 14,
     fontWeight: 600,
-    color: '#333',
+    color: 'var(--prism-text-primary)',
     marginBottom: 16,
   },
   badge: {
@@ -47,15 +50,15 @@ const styles = {
   },
   summaryLabel: {
     fontSize: 11,
-    fontWeight: 600,
-    color: '#888',
+    fontWeight: 500,
+    color: 'var(--prism-text-secondary)',
     textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    letterSpacing: 0.8,
   },
   summaryValue: {
     fontSize: 13,
-    color: '#1a1a1a',
-    fontFamily: 'monospace',
+    color: 'var(--prism-text-primary)',
+    fontFamily: '"JetBrains Mono", monospace',
   },
   tableWrapper: {
     overflowX: 'auto',
@@ -68,23 +71,25 @@ const styles = {
   th: {
     textAlign: 'left',
     padding: '8px 12px',
-    background: '#f5f5f5',
-    borderBottom: '1px solid #ddd',
-    fontWeight: 600,
-    color: '#555',
+    background: 'rgba(246, 241, 232, 0.9)',
+    borderBottom: '1px solid var(--prism-border-default)',
+    fontWeight: 500,
+    color: 'var(--prism-text-secondary)',
     fontSize: 12,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
   },
   td: {
     padding: '8px 12px',
-    borderBottom: '1px solid #eee',
-    color: '#1a1a1a',
-    fontFamily: 'monospace',
+    borderBottom: '1px solid var(--prism-border-subtle)',
+    color: 'var(--prism-text-primary)',
+    fontFamily: '"JetBrains Mono", monospace',
     fontSize: 12,
   },
   sectionTitle: {
     fontSize: 13,
     fontWeight: 600,
-    color: '#333',
+    color: 'var(--prism-text-primary)',
     marginBottom: 10,
     marginTop: 20,
   },
@@ -96,14 +101,14 @@ const styles = {
   },
   barLabel: {
     fontSize: 12,
-    color: '#555',
-    fontFamily: 'monospace',
+    color: 'var(--prism-text-secondary)',
+    fontFamily: '"JetBrains Mono", monospace',
     width: 60,
     flexShrink: 0,
   },
   barContainer: {
     flex: 1,
-    background: '#e8e8e8',
+    background: 'rgba(83, 81, 70, 0.18)',
     borderRadius: 3,
     height: 10,
     overflow: 'hidden',
@@ -111,19 +116,20 @@ const styles = {
   },
   barValue: {
     fontSize: 12,
-    color: '#1a1a1a',
-    fontFamily: 'monospace',
+    color: 'var(--prism-text-primary)',
+    fontFamily: '"JetBrains Mono", monospace',
     width: 80,
     textAlign: 'right',
     flexShrink: 0,
   },
   preBlock: {
-    background: '#f5f5f5',
-    border: '1px solid #ddd',
-    borderRadius: 4,
+    background: 'var(--prism-bg-elevated)',
+    border: '1px solid var(--prism-border-default)',
+    borderRadius: 3,
     padding: '12px 16px',
-    fontSize: 12,
-    fontFamily: 'monospace',
+    fontSize: 13,
+    fontFamily: '"JetBrains Mono", monospace',
+    color: 'var(--prism-text-primary)',
     overflowX: 'auto',
     whiteSpace: 'pre-wrap',
     wordBreak: 'break-all',
@@ -132,7 +138,7 @@ const styles = {
 };
 
 function DecisionBadge({ decision }) {
-  const colors = BADGE_STYLES[decision] ?? { background: '#e2e3e5', color: '#383d41' };
+  const colors = BADGE_STYLES[decision] ?? { background: 'rgba(83, 81, 70, 0.10)', color: '#6b6659', border: '1px solid rgba(83, 81, 70, 0.26)' };
   return (
     <div style={{ ...styles.badge, ...colors }}>
       {decision ?? '—'}
@@ -152,9 +158,9 @@ function SliceBars({ similarities, thresholds }) {
         const value = similarities[i] ?? 0;
         const threshold = resolvedThresholds[i] ?? 0;
         const pct = Math.min(Math.max(value, 0), 1) * 100;
-        let barColor = '#4a90d9';
+        let barColor = '#2563eb';
         if (threshold > 0) {
-          barColor = value >= threshold ? '#2e7d32' : '#c62828';
+          barColor = value >= threshold ? '#1f8f4d' : '#c24141';
         }
         return (
           <div key={label} style={styles.barLabelRow}>
@@ -168,7 +174,7 @@ function SliceBars({ similarities, thresholds }) {
                   top: 0,
                   bottom: 0,
                   width: 2,
-                  background: 'rgba(0,0,0,0.4)',
+                  background: 'rgba(83,81,70,0.35)',
                   borderRadius: 1,
                 }} />
               )}
@@ -213,7 +219,7 @@ function EvidenceTable({ evidence, policyMap }) {
                     <div>{policyName}</div>
                   )}
                   {entry.boundary_name && (
-                    <div style={{ color: '#999', fontSize: 11, marginTop: policyName ? 2 : 0 }}>
+                  <div style={{ color: 'var(--prism-text-secondary)', fontSize: 11, marginTop: policyName ? 2 : 0 }}>
                       {entry.boundary_name}
                     </div>
                   )}
@@ -224,18 +230,18 @@ function EvidenceTable({ evidence, policyMap }) {
                 <td style={styles.td}>{entry.triggering_slice ?? '—'}</td>
                 <td style={styles.td}>
                   {scoringMode ? (
-                    <span style={{
-                      display: 'inline-block',
-                      fontSize: 10,
-                      fontFamily: 'monospace',
-                      fontWeight: 600,
-                      padding: '2px 6px',
-                      borderRadius: 3,
-                      background: '#f0f0f0',
-                      color: '#555',
-                      whiteSpace: 'nowrap',
-                      letterSpacing: 0.2,
-                    }}>
+                      <span style={{
+                        display: 'inline-block',
+                        fontSize: 10,
+                        fontFamily: '"JetBrains Mono", monospace',
+                        fontWeight: 600,
+                        padding: '2px 6px',
+                        borderRadius: 3,
+                        background: 'rgba(83, 81, 70, 0.12)',
+                        color: 'var(--prism-text-secondary)',
+                        whiteSpace: 'nowrap',
+                        letterSpacing: 0.2,
+                      }}>
                       {scoringMode}
                     </span>
                   ) : '—'}
@@ -249,13 +255,13 @@ function EvidenceTable({ evidence, policyMap }) {
                       const fail = sim !== null && thr > 0 && sim < thr;
                       return (
                         <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}>
-                          <span style={{ fontSize: 10, color: '#999', width: 52, flexShrink: 0 }}>{label}</span>
-                          <span style={{ fontSize: 11, fontFamily: 'monospace', color: '#1a1a1a' }}>
+                          <span style={{ fontSize: 10, color: 'var(--prism-text-secondary)', width: 52, flexShrink: 0 }}>{label}</span>
+                          <span style={{ fontSize: 11, fontFamily: '"JetBrains Mono", monospace', color: 'var(--prism-text-primary)' }}>
                             {sim !== null ? sim.toFixed(2) : '—'}
-                            {thr > 0 && <span style={{ color: '#bbb' }}> / {thr.toFixed(2)}</span>}
+                            {thr > 0 && <span style={{ color: 'var(--prism-text-muted)' }}> / {thr.toFixed(2)}</span>}
                           </span>
-                          {pass && <span style={{ fontSize: 10, color: '#2e7d32', fontWeight: 700 }}>✓</span>}
-                          {fail && <span style={{ fontSize: 10, color: '#c62828', fontWeight: 700 }}>✗</span>}
+                          {pass && <span style={{ fontSize: 10, color: '#1f8f4d', fontWeight: 700 }}>✓</span>}
+                          {fail && <span style={{ fontSize: 10, color: '#c24141', fontWeight: 700 }}>✗</span>}
                         </div>
                       );
                     })}
@@ -271,7 +277,17 @@ function EvidenceTable({ evidence, policyMap }) {
 }
 
 export default function EnforcementResultPanel({ result, policies, showTopDivider = true }) {
-  if (!result) return null;
+  if (!result) {
+    return (
+      <div style={showTopDivider ? styles.panel : styles.panelNoDivider}>
+        <PrismEmptyState
+          icon={FlaskConical}
+          title="No run result yet"
+          description="Submit a dry run to inspect decisions, drift metrics, and policy evidence."
+        />
+      </div>
+    );
+  }
 
   const {
     decision,

@@ -132,32 +132,37 @@ const styles = {
   sidebar: {
     width: 260,
     flexShrink: 0,
+    border: '1px solid var(--prism-border-default)',
+    borderRadius: 6,
+    background: 'var(--prism-bg-base)',
+    padding: 10,
   },
   title: {
-    fontSize: 13,
-    fontWeight: 600,
-    color: '#555',
+    fontSize: 11,
+    fontWeight: 500,
+    color: 'var(--prism-text-secondary)',
     textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    letterSpacing: 0.8,
     marginBottom: 10,
   },
   row: {
     padding: '9px 10px',
-    borderBottom: '1px solid #eee',
+    borderBottom: '1px solid var(--prism-border-subtle)',
     cursor: 'pointer',
-    borderRadius: 4,
+    borderRadius: 3,
+    transition: 'background 0.15s, border-color 0.15s',
   },
   label: {
     fontSize: 13,
-    color: '#1a1a1a',
+    color: 'var(--prism-text-primary)',
     fontWeight: 500,
     display: 'block',
     marginBottom: 3,
   },
   sub: {
     fontSize: 11,
-    fontFamily: 'monospace',
-    color: '#999',
+    fontFamily: '"JetBrains Mono", monospace',
+    color: 'var(--prism-text-secondary)',
     display: 'block',
     overflow: 'hidden',
     textOverflow: 'ellipsis',
@@ -180,7 +185,7 @@ export default function SuggestedIntentsPanel({ onSelect }) {
             key={i}
             style={styles.row}
             onClick={() => onSelect(intent.formSnapshot)}
-            onMouseEnter={e => { e.currentTarget.style.background = '#f5f7fa'; }}
+            onMouseEnter={e => { e.currentTarget.style.background = 'var(--prism-accent-subtle)'; }}
             onMouseLeave={e => { e.currentTarget.style.background = ''; }}
           >
             <span style={styles.label}>{intent.label}</span>

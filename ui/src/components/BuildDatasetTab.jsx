@@ -1,15 +1,31 @@
 import { useState, useEffect, useCallback } from 'react';
+import { Database, FileSearch, MousePointerClick } from 'lucide-react';
 import { fetchCalls, deleteCalls, fetchCallDetail } from '../api/telemetry';
 import { getPolicy } from '../api/policies';
 import RunAnchorComparisonPanel from './RunAnchorComparisonPanel';
+import PrismEmptyState from './PrismEmptyState';
+import { Slider } from './ui/slider';
 
 const BADGE_COLORS = {
-  ALLOW:   { background: '#d4edda', color: '#155724' },
-  DENY:    { background: '#f8d7da', color: '#721c24' },
-  MODIFY:  { background: '#fff3cd', color: '#856404' },
-  STEP_UP: { background: '#cce5ff', color: '#004085' },
-  DEFER:   { background: '#e2e3e5', color: '#383d41' },
+  ALLOW: 'border-green-600/30 bg-green-100 text-green-700',
+  DENY: 'border-red-500/35 bg-red-100 text-red-700',
+  MODIFY: 'border-amber-600/30 bg-amber-100 text-amber-700',
+  STEP_UP: 'border-sky-600/30 bg-sky-100 text-sky-700',
+  DEFER: 'border-stone-400/40 bg-stone-100 text-stone-600',
 };
+
+const DEFAULT_BADGE_CLASS = 'border-stone-400/40 bg-stone-100 text-stone-600';
+
+function decisionBadgeClass(decision) {
+  return BADGE_COLORS[decision] ?? DEFAULT_BADGE_CLASS;
+}
+
+function buttonClass(enabled) {
+  if (!enabled) {
+    return 'rounded border border-[var(--prism-border-default)] px-3 py-1.5 text-xs font-medium text-[var(--prism-text-muted)] opacity-40 cursor-not-allowed pointer-events-none';
+  }
+  return 'rounded border border-[var(--prism-border-default)] px-3 py-1.5 text-xs font-medium text-[var(--prism-text-primary)] transition-colors hover:bg-[var(--prism-accent-subtle)] hover:text-[var(--prism-text-primary)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--prism-accent)]/40';
+}
 
 function truncate(str, max) {
   if (!str) return '';
@@ -71,129 +87,75 @@ export default function BuildDatasetTab() {
   }
 
   return (
-    <div style={{
-      height: 'calc(100vh - 120px)',
-      display: 'flex',
-      overflow: 'hidden',
-      borderRadius: 8,
-      fontFamily: 'monospace',
-    }}>
+    <div className="flex h-full min-h-0 overflow-hidden rounded border border-[var(--prism-border-default)] bg-[var(--prism-bg-surface)] shadow-sm">
       {/* Left panel — run list */}
-      <div style={{
-        width: 260,
-        flexShrink: 0,
-        borderRight: '1px solid #e0e0e0',
-        overflowY: 'auto',
-        height: '100%',
-        background: '#fafafa',
-        display: 'flex',
-        flexDirection: 'column',
-      }}>
-        <div style={{
-          padding: '12px 14px 10px',
-          borderBottom: '1px solid #e0e0e0',
-          fontSize: 13,
-          fontWeight: 600,
-          color: '#333',
-          letterSpacing: 0.2,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-        }}>
-          <span>Recent Calls <span style={{ fontWeight: 400, color: '#999', fontSize: 11 }}>{totalCount}</span></span>
+      <div className="flex h-full w-[300px] shrink-0 flex-col border-r border-[var(--prism-border-default)] bg-[var(--prism-bg-base)]">
+        <div className="flex items-center justify-between border-b border-[var(--prism-border-default)] px-3 py-2.5">
+          <span className="text-sm font-semibold text-[var(--prism-text-primary)]">
+            Recent Calls <span className="ml-1 text-xs font-normal text-[var(--prism-text-muted)]">{totalCount}</span>
+          </span>
           <button
             onClick={handleClearAll}
-            style={{ fontSize: 11, padding: '2px 8px', cursor: 'pointer', border: '1px solid #ddd', borderRadius: 3, background: '#fff', color: '#555' }}
+            className="rounded border border-[var(--prism-border-default)] px-2.5 py-1 text-xs font-medium text-[var(--prism-text-primary)] transition-colors hover:bg-[var(--prism-accent-subtle)] hover:text-[var(--prism-text-primary)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--prism-accent)]/40"
           >
             Clear All
           </button>
         </div>
 
         {calls.length === 0 ? (
-          <div style={{ padding: '20px 14px', fontSize: 13, color: '#999' }}>
-            No recent calls found.
+          <div className="h-full px-4">
+            <PrismEmptyState
+              icon={Database}
+              title="No recent calls"
+              description="Run an enforcement check to generate data for dataset feedback."
+              actionLabel="Refresh"
+              onAction={poll}
+              fullHeight
+            />
           </div>
         ) : (
-          calls.map((c) => {
-            const isSelected = selectedSummary?.call_id === c.call_id;
-            const badgeColors = BADGE_COLORS[c.decision] ?? BADGE_COLORS.DEFER;
-            return (
-              <div
-                key={c.call_id}
-                onClick={() => handleRowClick(c)}
-                style={{
-                  padding: '9px 12px',
-                  borderBottom: '1px solid #eee',
-                  cursor: 'pointer',
-                  background: isSelected ? '#eef4ff' : 'transparent',
-                  borderLeft: isSelected ? '3px solid #2563eb' : '3px solid transparent',
-                }}
-              >
-                <div style={{ fontSize: 11, color: '#888', marginBottom: 3, display: 'flex', alignItems: 'center', gap: 6 }}>
-                  {formatTs(c.ts_ms)}
-                  {c.is_dry_run && (
-                    <span style={{
-                      fontSize: 9,
-                      fontWeight: 600,
-                      padding: '1px 5px',
-                      borderRadius: 3,
-                      background: '#e8f0fe',
-                      color: '#1a56db',
-                      letterSpacing: 0.3,
-                    }}>
-                      dry run
-                    </span>
-                  )}
-                </div>
-                <div style={{
-                  fontSize: 12,
-                  color: '#1a1a1a',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                  marginBottom: 2,
-                }}>
-                  {truncate(c.op, 36)}
-                </div>
-                <div style={{
-                  fontSize: 11,
-                  color: '#666',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                  marginBottom: 5,
-                }}>
-                  {truncate(c.t, 36)}
-                </div>
-                <span style={{
-                  fontSize: 10,
-                  fontWeight: 600,
-                  padding: '2px 7px',
-                  borderRadius: 4,
-                  letterSpacing: 0.3,
-                  ...badgeColors,
-                }}>
-                  {c.decision ?? '—'}
-                </span>
-              </div>
-            );
-          })
+          <div className="prism-scrollbar min-h-0 flex-1 overflow-y-auto">
+            {calls.map((c) => {
+              const isSelected = selectedSummary?.call_id === c.call_id;
+              return (
+                <button
+                  key={c.call_id}
+                  onClick={() => handleRowClick(c)}
+                  className={`w-full border-b border-[var(--prism-border-subtle)] px-3 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--prism-accent)]/40 ${
+                    isSelected
+                      ? 'border-l-2 border-l-[var(--prism-accent)] bg-[var(--prism-accent-subtle)]'
+                      : 'border-l-2 border-l-transparent hover:bg-[rgba(201,100,66,0.08)]'
+                  }`}
+                >
+                  <div className="mb-1.5 flex items-center gap-2 text-[11px] text-[var(--prism-text-muted)]">
+                    <span>{formatTs(c.ts_ms)}</span>
+                    {c.is_dry_run && (
+                      <span className="rounded-sm border border-[var(--prism-accent)]/35 bg-[var(--prism-accent-subtle)] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--prism-accent)]">
+                        dry run
+                      </span>
+                    )}
+                  </div>
+                  <div className="mb-1 truncate font-mono text-sm text-[var(--prism-text-primary)]">{truncate(c.op, 36)}</div>
+                  <div className="mb-2 truncate font-mono text-sm text-[var(--prism-text-secondary)]">{truncate(c.t, 36)}</div>
+                  <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-medium ${decisionBadgeClass(c.decision)}`}>
+                    {c.decision ?? '—'}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
         )}
       </div>
 
       {/* Right panel — details or placeholder */}
-      <div style={{ flex: 1, overflowY: 'auto', overflowX: 'auto', height: '100%', padding: '20px 24px' }}>
+      <div className="prism-scrollbar h-full min-h-0 flex-1 overflow-y-auto overflow-x-auto bg-[var(--prism-bg-surface)] px-6 py-5">
         {selectedCall === null ? (
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            height: '100%',
-            color: '#aaa',
-            fontSize: 14,
-          }}>
-            Select a call to compare slices
-          </div>
+          <PrismEmptyState
+            icon={MousePointerClick}
+            title="Select a call"
+            description="Choose a run from the left panel to compare intent slices and export feedback."
+            fullHeight
+          />
         ) : (
           <RunDetail call={selectedCall} />
         )}
@@ -276,8 +238,7 @@ function SliceCell({ intent, anchor, similarity, threshold, isWorst, feedbackKey
   // Number input display value: show current score as string, or empty if null
   const numberInputValue = currentScore !== null ? String(currentScore) : '';
 
-  function handleSliderChange(e) {
-    const raw = parseInt(e.target.value, 10);
+  function handleSliderChange(raw) {
     if (raw === 0) {
       // Treat 0 as clearing the score
       onFeedbackChange(feedbackKey, null, currentRationale);
@@ -326,55 +287,45 @@ function SliceCell({ intent, anchor, similarity, threshold, isWorst, feedbackKey
     : (sliderDisplayValue > 0 ? `+${(sliderDisplayValue / 100).toFixed(2)}` : `${(sliderDisplayValue / 100).toFixed(2)}`);
 
   const scoreLabelColor = sliderDisplayValue === 0
-    ? '#aaa'
+    ? '#8a8779'
     : sliderDisplayValue > 0
-      ? '#166534'
-      : '#991b1b';
+      ? '#4ade80'
+      : '#c24141';
 
   return (
-    <td style={{
-      padding: '10px 12px',
-      borderTop: isWorst ? '2px solid #f59e0b' : '1px solid #eee',
-      borderRight: '1px solid #eee',
-      borderBottom: '1px solid #eee',
-      borderLeft: '1px solid #eee',
-      verticalAlign: 'top',
-      background: 'transparent',
-      wordBreak: 'break-word',
-      overflowWrap: 'break-word',
-    }}>
+    <td
+      className={`border-b border-r border-[var(--prism-border-subtle)] px-3 py-2.5 align-top text-[var(--prism-text-primary)] ${
+        isWorst ? 'border-t-2 border-t-amber-600' : 'border-t border-t-[var(--prism-border-subtle)]'
+      }`}
+      style={{ wordBreak: 'break-word', overflowWrap: 'break-word' }}
+    >
       <RunAnchorComparisonPanel intentValue={intent} policyAnchorValue={anchor} />
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
-        <span style={{ fontWeight: 600, color: '#1a1a1a' }}>
+      <div className="mt-2 flex items-center gap-2 text-xs">
+        <span className="font-semibold text-[var(--prism-text-primary)]">
           {similarity.toFixed(2)}
         </span>
-        <span style={{ color: '#888' }}>
+        <span className="text-[var(--prism-text-muted)]">
           / {threshold.toFixed(2)}
         </span>
-        <span style={{
-          fontWeight: 700,
-          fontSize: 13,
-          color: passes ? '#166534' : '#991b1b',
-        }}>
+        <span className={`text-sm font-bold ${passes ? 'text-green-700' : 'text-red-700'}`}>
           {passes ? '✓' : '✗'}
         </span>
       </div>
 
-      <hr style={{ margin: '8px 0', borderColor: '#eee' }} />
+      <hr className="my-2.5 border-[var(--prism-border-default)]" />
 
       <div>
-        <div style={{ marginBottom: 4 }}>
-          <input
-            type="range"
-            min="-100"
-            max="100"
-            step="1"
-            value={sliderDisplayValue}
-            onChange={handleSliderChange}
-            style={{ width: '100%', cursor: 'pointer', display: 'block' }}
+        <div className="mb-2">
+          <Slider
+            min={-100}
+            max={100}
+            step={1}
+            value={[sliderDisplayValue]}
+            onValueChange={(value) => handleSliderChange(value[0] ?? 0)}
+            className="w-full"
           />
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+        <div className="mb-2 flex items-center gap-2">
           <input
             type="number"
             min="-1"
@@ -383,17 +334,9 @@ function SliceCell({ intent, anchor, similarity, threshold, isWorst, feedbackKey
             value={numberInputValue}
             onChange={handleNumberChange}
             onBlur={handleNumberBlur}
-            style={{
-              width: 48,
-              fontSize: 11,
-              fontFamily: 'monospace',
-              border: '1px solid #ddd',
-              borderRadius: 3,
-              padding: '2px 4px',
-              textAlign: 'right',
-            }}
+            className="h-7 w-16 rounded-sm border border-[var(--prism-border-default)] bg-[var(--prism-bg-elevated)] px-2 text-right font-mono text-sm text-[var(--prism-text-primary)] outline-none transition-colors placeholder:text-[var(--prism-text-muted)] focus:border-[var(--prism-accent)]/60 focus:ring-1 focus:ring-[var(--prism-accent)]/20"
           />
-          <span style={{ fontSize: 10, color: scoreLabelColor, fontWeight: 600, minWidth: 28, textAlign: 'right' }}>
+          <span className="min-w-10 text-right text-xs font-semibold" style={{ color: scoreLabelColor }}>
             {scoreLabel}
           </span>
         </div>
@@ -402,17 +345,7 @@ function SliceCell({ intent, anchor, similarity, threshold, isWorst, feedbackKey
             placeholder="Why? (optional)"
             value={currentRationale}
             onChange={handleRationaleChange}
-            style={{
-              width: '100%',
-              height: 40,
-              resize: 'none',
-              borderRadius: 3,
-              border: '1px solid #ddd',
-              padding: '4px 6px',
-              fontFamily: 'monospace',
-              fontSize: 10,
-              boxSizing: 'border-box',
-            }}
+            className="h-12 w-full resize-none rounded-sm border border-[var(--prism-border-default)] bg-[var(--prism-bg-elevated)] p-2 font-mono text-xs text-[var(--prism-text-primary)] outline-none transition-colors placeholder:text-[var(--prism-text-muted)] focus:border-[var(--prism-accent)]/60 focus:ring-1 focus:ring-[var(--prism-accent)]/20"
           />
         )}
       </div>
@@ -434,7 +367,6 @@ function RunDetail({ call }) {
     ctxInitialRequest: call.intent_event?.ctx?.initial_request ?? '',
   };
   const evidence = call.enforcement_result?.evidence ?? [];
-  const badgeColors = BADGE_COLORS[call.decision] ?? BADGE_COLORS.DEFER;
 
   useEffect(() => {
     setPolicies({});
@@ -465,75 +397,42 @@ function RunDetail({ call }) {
   return (
     <div>
       {/* Header */}
-      <div style={{ marginBottom: 18, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 12, color: '#888' }}>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-[var(--prism-border-default)] pb-3">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <span className="text-xs text-[var(--prism-text-muted)]">
             {call.ts_ms ? new Date(call.ts_ms).toLocaleString() : '—'}
           </span>
-          <span style={{
-            fontSize: 11,
-            fontWeight: 600,
-            padding: '2px 8px',
-            borderRadius: 4,
-            letterSpacing: 0.3,
-            ...badgeColors,
-          }}>
+          <span className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${decisionBadgeClass(call.decision)}`}>
             {call.decision ?? '—'}
           </span>
           {call.is_dry_run && (
-            <span style={{
-              fontSize: 10,
-              fontWeight: 600,
-              padding: '1px 6px',
-              borderRadius: 3,
-              background: '#e8f0fe',
-              color: '#1a56db',
-              letterSpacing: 0.3,
-            }}>
+            <span className="rounded-sm border border-[var(--prism-accent)]/35 bg-[var(--prism-accent-subtle)] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--prism-accent)]">
               dry run
             </span>
           )}
           {snap.op && (
-            <span style={{ fontSize: 12, color: '#444', fontFamily: 'monospace', background: '#f5f5f5', padding: '2px 6px', borderRadius: 3 }}>
+            <span className="rounded-sm border border-[var(--prism-border-default)] bg-[var(--prism-bg-elevated)] px-2 py-0.5 font-mono text-sm text-[var(--prism-text-primary)]">
               {snap.op}
             </span>
           )}
           {snap.t && (
-            <span style={{ fontSize: 12, color: '#666', fontFamily: 'monospace', background: '#f5f5f5', padding: '2px 6px', borderRadius: 3 }}>
+            <span className="rounded-sm border border-[var(--prism-border-default)] bg-[var(--prism-bg-elevated)] px-2 py-0.5 font-mono text-sm text-[var(--prism-text-secondary)]">
               {snap.t}
             </span>
           )}
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div className="flex gap-2">
           <button
             onClick={() => setFeedback({})}
             disabled={!hasFeedback}
-            style={{
-              border: '1px solid #e0e0e0',
-              background: 'white',
-              padding: '4px 10px',
-              fontSize: 12,
-              borderRadius: 4,
-              cursor: hasFeedback ? 'pointer' : 'not-allowed',
-              fontFamily: 'monospace',
-              color: hasFeedback ? '#991b1b' : '#aaa',
-            }}
+            className={buttonClass(hasFeedback)}
           >
             Reset All
           </button>
           <button
             onClick={() => exportFeedbackAsJSONL(call, evidence, policies, snap, feedback)}
             disabled={!hasFeedback}
-            style={{
-              border: '1px solid #ccc',
-              background: 'white',
-              padding: '4px 10px',
-              fontSize: 12,
-              borderRadius: 4,
-              cursor: hasFeedback ? 'pointer' : 'not-allowed',
-              fontFamily: 'monospace',
-              color: hasFeedback ? '#1a1a1a' : '#aaa',
-            }}
+            className={buttonClass(hasFeedback)}
           >
             Export Dataset
           </button>
@@ -541,42 +440,25 @@ function RunDetail({ call }) {
       </div>
 
       {loading ? (
-        <div style={{ color: '#aaa', fontSize: 13, padding: '24px 0' }}>
+        <div className="py-6 text-sm text-[var(--prism-text-secondary)]">
           Loading policies...
         </div>
       ) : evidence.length === 0 ? (
-        <div style={{ color: '#aaa', fontSize: 13, padding: '24px 0' }}>
-          No evidence items for this run.
-        </div>
+        <PrismEmptyState
+          icon={FileSearch}
+          title="No evidence for this run"
+          description="This enforcement result has no policy evidence to score yet."
+          className="py-10"
+        />
       ) : (
-        <table style={{ borderCollapse: 'collapse', fontSize: 12, fontFamily: 'monospace', width: '100%', tableLayout: 'fixed', minWidth: 900 }}>
+        <table className="w-full min-w-[980px] table-fixed border-collapse text-sm">
           <thead>
-            <tr style={{ background: '#f5f5f5' }}>
-              <th style={{
-                padding: '10px 12px',
-                border: '1px solid #eee',
-                textAlign: 'left',
-                fontSize: 11,
-                fontWeight: 600,
-                letterSpacing: 0.8,
-                color: '#555',
-                textTransform: 'uppercase',
-                width: 180,
-              }}>
+            <tr className="bg-[var(--prism-bg-base)] text-xs font-medium uppercase tracking-wider text-[var(--prism-text-secondary)]">
+              <th className="w-[220px] border border-[var(--prism-border-subtle)] border-b-[var(--prism-border-default)] px-3 py-2.5 text-left">
                 Policy
               </th>
               {SLICE_NAMES.map(name => (
-                <th key={name} style={{
-                  padding: '10px 12px',
-                  border: '1px solid #eee',
-                  textAlign: 'left',
-                  fontSize: 11,
-                  fontWeight: 600,
-                  letterSpacing: 0.8,
-                  color: '#555',
-                  textTransform: 'uppercase',
-                  width: 'calc((100% - 180px) / 4)',
-                }}>
+                <th key={name} className="border border-[var(--prism-border-subtle)] border-b-[var(--prism-border-default)] px-3 py-2.5 text-left">
                   {name}
                 </th>
               ))}
@@ -592,19 +474,14 @@ function RunDetail({ call }) {
 
               return (
                 <tr key={rowIdx}>
-                  <td style={{
-                    padding: '10px 12px',
-                    border: '1px solid #eee',
-                    verticalAlign: 'top',
-                    whiteSpace: 'normal',
-                    wordBreak: 'break-word',
-                    color: '#1a1a1a',
-                    fontWeight: 500,
-                  }}>
-                    <div style={{ fontSize: 12, marginBottom: 3 }}>
+                  <td
+                    className="border border-[var(--prism-border-subtle)] px-3 py-2.5 align-top"
+                    style={{ whiteSpace: 'normal', wordBreak: 'break-word' }}
+                  >
+                    <div className="mb-1 font-medium text-[var(--prism-text-primary)]">
                       {item.boundary_name || item.boundary_id || '—'}
                     </div>
-                    <div style={{ fontSize: 10, color: '#888' }}>
+                    <div className="text-xs text-[var(--prism-text-muted)]">
                       {item.effect ?? '—'} · {item.decision === 1 ? 'allowed' : 'blocked'}
                     </div>
                   </td>

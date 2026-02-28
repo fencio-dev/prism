@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
+import { Activity, History, MousePointerClick, ShieldX } from 'lucide-react';
 import { fetchCalls, fetchCallDetail, deleteCalls } from '../api/telemetry';
 import { getPolicy } from '../api/policies';
 import EnforcementResultPanel from './EnforcementResultPanel';
+import PrismEmptyState from './PrismEmptyState';
 import RunAnchorComparisonPanel from './RunAnchorComparisonPanel';
 
 function formatTime(ms) {
@@ -20,11 +22,11 @@ function truncate(str, len = 14) {
 }
 
 const DECISION_COLORS = {
-  ALLOW:   { background: '#d4edda', color: '#155724' },
-  DENY:    { background: '#f8d7da', color: '#721c24' },
-  MODIFY:  { background: '#fff3cd', color: '#856404' },
-  STEP_UP: { background: '#cce5ff', color: '#004085' },
-  DEFER:   { background: '#e2e3e5', color: '#383d41' },
+  ALLOW: 'border-green-600/30 bg-green-100 text-green-700',
+  DENY: 'border-red-500/35 bg-red-100 text-red-700',
+  MODIFY: 'border-amber-600/30 bg-amber-100 text-amber-700',
+  STEP_UP: 'border-sky-600/30 bg-sky-100 text-sky-700',
+  DEFER: 'border-stone-400/40 bg-stone-100 text-stone-600',
 };
 
 const SLICE_COMPARISON_CONFIG = [
@@ -34,198 +36,8 @@ const SLICE_COMPARISON_CONFIG = [
   { label: 'Risk', intentKey: 'ctx', anchorKey: 'ctx' },
 ];
 
-const styles = {
-  header: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 16,
-  },
-  heading: {
-    fontSize: 15,
-    fontWeight: 600,
-    color: '#1a1a1a',
-    display: 'flex',
-    alignItems: 'center',
-    gap: 10,
-  },
-  totalCount: {
-    fontSize: 13,
-    color: '#888',
-    fontWeight: 400,
-  },
-  statusArea: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 6,
-    fontSize: 13,
-    color: '#555',
-  },
-  dot: (color) => ({
-    display: 'inline-block',
-    width: 8,
-    height: 8,
-    borderRadius: '50%',
-    background: color,
-    flexShrink: 0,
-  }),
-  offlineBanner: {
-    background: '#fff3cd',
-    border: '1px solid #ffc107',
-    borderRadius: 4,
-    padding: '10px 14px',
-    fontSize: 13,
-    color: '#856404',
-    marginBottom: 16,
-  },
-  tableWrapper: {
-    overflowX: 'auto',
-    overflowY: 'auto',
-    height: '100%',
-  },
-  layout: (isNarrow) => ({
-    display: 'flex',
-    flexDirection: isNarrow ? 'column' : 'row',
-    gap: 16,
-  }),
-  leftPanel: (isNarrow) => ({
-    width: isNarrow ? '100%' : '50%',
-    height: isNarrow ? 360 : 'calc(100vh - 240px)',
-    border: '1px solid #e6e6e6',
-    borderRadius: 6,
-    overflow: 'hidden',
-    background: '#fff',
-  }),
-  rightPanel: (isNarrow) => ({
-    width: isNarrow ? '100%' : '50%',
-    height: isNarrow ? 'auto' : 'calc(100vh - 240px)',
-    border: '1px solid #e6e6e6',
-    borderRadius: 6,
-    padding: 12,
-    overflowY: 'auto',
-    background: '#fff',
-  }),
-  panelTitle: {
-    fontSize: 13,
-    fontWeight: 600,
-    color: '#333',
-    marginBottom: 10,
-  },
-  panelMessage: {
-    fontSize: 12,
-    color: '#666',
-    lineHeight: 1.4,
-  },
-  comparisonCard: {
-    border: '1px solid #eee',
-    borderRadius: 6,
-    padding: 10,
-    marginBottom: 10,
-    background: '#fafafa',
-  },
-  comparisonHeader: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 8,
-    marginBottom: 8,
-  },
-  comparisonName: {
-    fontSize: 12,
-    fontWeight: 600,
-    color: '#222',
-  },
-  comparisonStatus: {
-    fontSize: 11,
-    color: '#666',
-  },
-  sliceCard: {
-    borderTop: '1px solid #ececec',
-    paddingTop: 8,
-    marginTop: 8,
-  },
-  sliceLabel: {
-    fontSize: 11,
-    color: '#777',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginBottom: 4,
-  },
-  sliceMetrics: {
-    marginTop: 4,
-    fontSize: 11,
-    color: '#666',
-  },
-  sliceMetricsRow: {
-    marginTop: 4,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 8,
-  },
-  sliceCheck: (passes) => ({
-    fontSize: 14,
-    fontWeight: 700,
-    color: passes ? '#166534' : '#991b1b',
-    lineHeight: 1,
-  }),
-  sectionDivider: {
-    borderTop: '1px solid #ececec',
-    marginTop: 14,
-    paddingTop: 10,
-  },
-  table: {
-    width: '100%',
-    borderCollapse: 'collapse',
-    fontSize: 13,
-  },
-  th: {
-    textAlign: 'left',
-    padding: '8px 12px',
-    background: '#f5f5f5',
-    borderBottom: '1px solid #ddd',
-    fontWeight: 600,
-    color: '#555',
-    fontSize: 12,
-  },
-  td: {
-    padding: '8px 12px',
-    borderBottom: '1px solid #eee',
-    color: '#1a1a1a',
-    fontSize: 12,
-    fontFamily: 'monospace',
-  },
-  badge: {
-    display: 'inline-block',
-    fontSize: 11,
-    fontWeight: 700,
-    padding: '2px 8px',
-    borderRadius: 4,
-    letterSpacing: 0.5,
-  },
-  emptyState: {
-    textAlign: 'center',
-    color: '#888',
-    fontSize: 13,
-    fontStyle: 'italic',
-    padding: '24px 0',
-  },
-  dryRunPill: {
-    display: 'inline-block',
-    fontSize: 10,
-    fontWeight: 600,
-    padding: '1px 6px',
-    borderRadius: 3,
-    background: '#e8f0fe',
-    color: '#1a56db',
-    marginLeft: 6,
-    letterSpacing: 0.3,
-  },
-};
-
 function decisionBadgeStyle(decision) {
-  const colors = DECISION_COLORS[decision] ?? { background: '#e2e3e5', color: '#383d41' };
-  return { ...styles.badge, ...colors };
+  return DECISION_COLORS[decision] ?? DECISION_COLORS.DEFER;
 }
 
 export default function TelemetryTable() {
@@ -365,156 +177,190 @@ export default function TelemetryTable() {
     }
   }
 
+  function handleRowKeyDown(event, call) {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      handleRowClick(call);
+    }
+  }
+
   return (
-    <div>
-      <div style={styles.header}>
-        <div style={styles.heading}>
-          Telemetry
-          <span style={styles.totalCount}>{totalCount} calls</span>
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="mb-4 flex shrink-0 flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <h2 className="text-lg font-semibold text-[var(--prism-text-primary)]">Telemetry</h2>
+          <span className="text-sm text-[var(--prism-text-secondary)]">{totalCount} calls</span>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <button onClick={handleClearAll} style={{ fontSize: 12, padding: '4px 10px', cursor: 'pointer' }}>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleClearAll}
+            className="rounded border border-[var(--prism-border-default)] px-3 py-1.5 text-xs font-medium text-[var(--prism-text-primary)] transition-colors hover:bg-[var(--prism-accent-subtle)] hover:text-[var(--prism-text-primary)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--prism-accent)]/40"
+          >
             Clear All
           </button>
-          <div style={styles.statusArea}>
-          {offline ? (
-            <>
-              <span style={styles.dot('red')} />
-              Guard not running
-            </>
-          ) : loading ? (
-            'Loading...'
-          ) : (
-            <>
-              <span style={styles.dot('green')} />
-              Live
-              {lastUpdated && (
-                <span style={{ color: '#aaa' }}>· last updated {formatTimeShort(lastUpdated)}</span>
-              )}
-            </>
-          )}
+          <div className="flex items-center gap-2 text-sm text-[var(--prism-text-secondary)]">
+            {offline ? (
+              <>
+                <span className="h-2 w-2 rounded-full bg-red-400" />
+                Prism backend unreachable
+              </>
+            ) : loading ? (
+              'Loading...'
+            ) : (
+              <>
+                <span className="h-2 w-2 rounded-full bg-green-400" />
+                Live
+                {lastUpdated && <span className="text-xs text-[var(--prism-text-muted)]">· updated {formatTimeShort(lastUpdated)}</span>}
+              </>
+            )}
           </div>
         </div>
       </div>
 
       {offline && (
-        <div style={styles.offlineBanner}>
-          Guard backend is not reachable. Retrying...
+        <div className="mb-4 rounded border border-amber-600/35 bg-amber-100 px-3 py-2 text-sm text-amber-700">
+          Prism backend is not reachable. Retrying...
         </div>
       )}
 
       {error && !offline && (
-        <div style={{ ...styles.offlineBanner, background: '#f8d7da', borderColor: '#f5c6cb', color: '#721c24' }}>
+        <div className="mb-4 rounded border border-red-500/35 bg-red-100 px-3 py-2 text-sm text-red-700">
           Error: {error}
         </div>
       )}
 
-      <div style={styles.layout(isNarrow)}>
-        <div style={styles.leftPanel(isNarrow)}>
-          <div style={styles.tableWrapper}>
-            <table style={styles.table}>
-              <thead>
-                <tr>
-                  <th style={styles.th}>Time</th>
-                  <th style={styles.th}>Agent ID</th>
-                  <th style={styles.th}>Decision</th>
-                  <th style={styles.th}>Op</th>
-                  <th style={styles.th}>Target (t)</th>
-                </tr>
-              </thead>
-              <tbody>
-                {calls.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} style={styles.emptyState}>
-                      No calls recorded yet.
-                    </td>
-                  </tr>
-                ) : (
-                  calls.map((c) => {
-                    const isSelected = c.call_id === selectedCallId;
-                    const decision = c.decision ?? '—';
-                    const badge = decisionBadgeStyle(decision);
-                    return (
-                      <tr
-                        key={c.call_id}
-                        onClick={() => handleRowClick(c)}
-                        style={{ cursor: 'pointer', background: isSelected ? '#e8f0fe' : undefined }}
-                        onMouseEnter={(e) => {
-                          if (!isSelected) e.currentTarget.style.background = '#f5f5f5';
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.background = isSelected ? '#e8f0fe' : '';
-                        }}
-                      >
-                        <td style={styles.td}>{formatTime(c.ts_ms)}</td>
-                        <td style={styles.td}>
-                          {truncate(c.agent_id)}
-                          {c.is_dry_run && <span style={styles.dryRunPill}>dry run</span>}
-                        </td>
-                        <td style={styles.td}>
-                          <span style={badge}>{decision}</span>
-                        </td>
-                        <td style={styles.td}>{c.op ?? '—'}</td>
-                        <td style={styles.td}>{c.t ?? '—'}</td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', borderTop: '1px solid #eee', fontSize: 12, color: '#555' }}>
-            <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0} style={{ cursor: 'pointer', padding: '2px 8px' }}>
-              ← Prev
-            </button>
-            <span>Page {page + 1}</span>
-            <button onClick={() => setPage(p => p + 1)} disabled={calls.length < 50} style={{ cursor: 'pointer', padding: '2px 8px' }}>
-              Next →
-            </button>
-          </div>
+      <div className={`flex min-h-0 flex-1 gap-6 ${isNarrow ? 'flex-col overflow-y-auto' : 'flex-row overflow-hidden'}`}>
+        <div className={`flex flex-col overflow-hidden rounded border border-[var(--prism-border-default)] bg-[var(--prism-bg-surface)] shadow-sm ${isNarrow ? 'h-[360px] w-full shrink-0' : 'h-full min-h-0 w-1/2'}`}>
+          {calls.length === 0 && !loading ? (
+            <div className="h-full px-4">
+              <PrismEmptyState
+                icon={Activity}
+                title="No telemetry calls"
+                description="Run an enforcement check to capture telemetry and inspect policy comparisons."
+                actionLabel="Refresh"
+                onAction={poll}
+                fullHeight
+              />
+            </div>
+          ) : (
+            <>
+              <div className="prism-scrollbar min-h-0 flex-1 overflow-x-auto overflow-y-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-[var(--prism-bg-base)] text-xs font-medium uppercase tracking-wider text-[var(--prism-text-secondary)]">
+                      <th className="border-b border-[var(--prism-border-default)] px-3 py-2.5 text-left">Time</th>
+                      <th className="border-b border-[var(--prism-border-default)] px-3 py-2.5 text-left">Agent ID</th>
+                      <th className="border-b border-[var(--prism-border-default)] px-3 py-2.5 text-left">Decision</th>
+                      <th className="border-b border-[var(--prism-border-default)] px-3 py-2.5 text-left">Op</th>
+                      <th className="border-b border-[var(--prism-border-default)] px-3 py-2.5 text-left">Target (t)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {calls.map((c) => {
+                      const isSelected = c.call_id === selectedCallId;
+                      const decision = c.decision ?? '—';
+                      return (
+                        <tr
+                          key={c.call_id}
+                          onClick={() => handleRowClick(c)}
+                          onKeyDown={(event) => handleRowKeyDown(event, c)}
+                          tabIndex={0}
+                           className={`cursor-pointer border-b border-[var(--prism-border-subtle)] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-[var(--prism-accent)]/40 ${isSelected ? 'bg-[var(--prism-accent-subtle)]' : 'hover:bg-[rgba(201,100,66,0.08)]'}`}
+                        >
+                          <td className="px-3 py-2.5 font-mono text-sm text-[var(--prism-text-primary)]">{formatTime(c.ts_ms)}</td>
+                          <td className="px-3 py-2.5 font-mono text-sm text-[var(--prism-text-primary)]">
+                            {truncate(c.agent_id)}
+                            {c.is_dry_run && (
+                              <span className="ml-1.5 rounded-sm border border-[var(--prism-accent)]/35 bg-[var(--prism-accent-subtle)] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--prism-accent)]">
+                                dry run
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2.5 text-[var(--prism-text-primary)]">
+                            <span className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${decisionBadgeStyle(decision)}`}>
+                              {decision}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2.5 font-mono text-sm text-[var(--prism-text-primary)]">{c.op ?? '—'}</td>
+                          <td className="px-3 py-2.5 font-mono text-sm text-[var(--prism-text-primary)]">{c.t ?? '—'}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <div className="flex items-center justify-between border-t border-[var(--prism-border-default)] px-3 py-2 text-xs text-[var(--prism-text-secondary)]">
+                <button
+                  onClick={() => setPage(p => Math.max(0, p - 1))}
+                  disabled={page === 0}
+                  className="rounded border border-[var(--prism-border-default)] px-2 py-1 text-[var(--prism-text-primary)] transition-colors hover:bg-[var(--prism-accent-subtle)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--prism-accent)]/40 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  ← Prev
+                </button>
+                <span>Page {page + 1}</span>
+                <button
+                  onClick={() => setPage(p => p + 1)}
+                  disabled={calls.length < 50}
+                  className="rounded border border-[var(--prism-border-default)] px-2 py-1 text-[var(--prism-text-primary)] transition-colors hover:bg-[var(--prism-accent-subtle)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--prism-accent)]/40 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Next →
+                </button>
+              </div>
+            </>
+          )}
         </div>
 
-        <div style={styles.rightPanel(isNarrow)}>
+        <div className={`${isNarrow ? 'w-full border-t border-[var(--prism-border-default)] pb-6' : 'prism-scrollbar h-full min-h-0 w-1/2 overflow-y-auto border-l border-[var(--prism-border-default)]'} bg-[var(--prism-bg-surface)] px-5 py-4`}>
           {!selectedCallId && !loadingDetail && (
-            <div style={styles.panelMessage}>Select a call to inspect comparison details.</div>
+            <PrismEmptyState
+              icon={MousePointerClick}
+              title="Select a call"
+              description="Choose a telemetry row to inspect enforcement output and policy-anchor comparisons."
+              fullHeight
+            />
           )}
 
           {loadingDetail && (
-            <div style={styles.panelMessage}>Loading call detail...</div>
+            <div className="text-sm text-[var(--prism-text-secondary)]">Loading call detail...</div>
           )}
 
           {detailError && !loadingDetail && (
-            <div style={{ ...styles.panelMessage, color: '#721c24' }}>Error: {detailError}</div>
+            <div className="text-sm text-red-300">Error: {detailError}</div>
           )}
 
           {detail && !loadingDetail && (
             <>
               <EnforcementResultPanel result={detail.enforcement_result} showTopDivider={false} />
 
-              <div style={styles.sectionDivider}>
+              <div className="mt-4 border-t border-[var(--prism-border-default)] pt-3">
                 {!detail.call?.intent_event ? (
-                  <div style={styles.panelMessage}>
-                    Detailed intent vs policy-anchor comparison is unavailable for this legacy run (missing `call.intent_event`).
-                  </div>
+                  <PrismEmptyState
+                    icon={History}
+                    title="Comparison unavailable"
+                    description="This legacy run does not include intent-event fields required for anchor comparison."
+                  />
                 ) : loadingPolicies ? (
-                  <div style={styles.panelMessage}>Loading policy anchors...</div>
+                    <div className="text-sm text-[var(--prism-text-secondary)]">Loading policy anchors...</div>
                 ) : policyError ? (
-                  <div style={{ ...styles.panelMessage, color: '#721c24' }}>Error: {policyError}</div>
+                  <div className="text-sm text-red-300">Error: {policyError}</div>
                 ) : Array.isArray(detail.enforcement_result?.evidence) && detail.enforcement_result.evidence.length > 0 ? (
                   <>
-                    <div style={styles.panelTitle}>Intent vs Policy Anchors</div>
+                    <div className="mb-3 text-sm font-semibold text-[var(--prism-text-primary)]">Intent vs Policy Anchors</div>
                     {detail.enforcement_result.evidence.map((entry, idx) => {
                       const policy = policyById[entry.boundary_id];
                       const policyMatch = policy?.match ?? {};
                       const similarities = Array.isArray(entry.similarities) ? entry.similarities : [0, 0, 0, 0];
                       const thresholds = Array.isArray(entry.thresholds) ? entry.thresholds : [0, 0, 0, 0];
                       return (
-                        <div key={`${entry.boundary_id || 'policy'}-${idx}`} style={styles.comparisonCard}>
-                          <div style={styles.comparisonHeader}>
-                            <div style={styles.comparisonName}>
+                        <div
+                          key={`${entry.boundary_id || 'policy'}-${idx}`}
+                           className="mb-3 rounded border border-[var(--prism-border-default)] bg-[var(--prism-bg-base)] p-4 transition-colors hover:border-[var(--prism-border-strong)] hover:bg-[var(--prism-bg-elevated)]"
+                         >
+                          <div className="mb-2 flex items-center justify-between gap-2">
+                            <div className="text-sm font-semibold text-[var(--prism-text-primary)]">
                               {entry.boundary_name || policy?.name || entry.boundary_id || 'Policy'}
                             </div>
-                            <div style={styles.comparisonStatus}>
+                            <div className="text-xs text-[var(--prism-text-secondary)]">
                               {entry.decision === 1 ? 'matched' : 'no match'}
                             </div>
                           </div>
@@ -524,17 +370,15 @@ export default function TelemetryTable() {
                             const thr = thresholds[sliceIdx] ?? 0;
                             const passes = sim >= thr;
                             return (
-                              <div key={slice.label} style={styles.sliceCard}>
-                                <div style={styles.sliceLabel}>{slice.label}</div>
+                              <div key={slice.label} className="mt-3 border-t border-[var(--prism-border-default)] pt-3">
+                                <div className="mb-1 text-xs font-medium uppercase tracking-wider text-[var(--prism-text-secondary)]">{slice.label}</div>
                                 <RunAnchorComparisonPanel
                                   intentValue={detail.call.intent_event?.[slice.intentKey]}
                                   policyAnchorValue={policyMatch[slice.anchorKey]}
                                 />
-                                <div style={styles.sliceMetricsRow}>
-                                  <div style={styles.sliceMetrics}>
-                                    Similarity {sim.toFixed(2)} / Threshold {thr.toFixed(2)}
-                                  </div>
-                                  <span style={styles.sliceCheck(passes)}>{passes ? '✓' : '✗'}</span>
+                                <div className="mt-2 flex items-center justify-between gap-2 text-xs text-[var(--prism-text-secondary)]">
+                                  <div>Similarity {sim.toFixed(2)} / Threshold {thr.toFixed(2)}</div>
+                                  <span className={`text-sm font-bold ${passes ? 'text-green-700' : 'text-red-700'}`}>{passes ? '✓' : '✗'}</span>
                                 </div>
                               </div>
                             );
@@ -544,7 +388,11 @@ export default function TelemetryTable() {
                     })}
                   </>
                 ) : (
-                  <div style={styles.panelMessage}>No policy evidence available for comparison.</div>
+                  <PrismEmptyState
+                    icon={ShieldX}
+                    title="No policy evidence"
+                    description="No evidence records are available for intent vs policy-anchor comparison."
+                  />
                 )}
               </div>
             </>
