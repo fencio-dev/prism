@@ -9,7 +9,7 @@ Follow this checklist to safely prepare your repository for public release.
 ## 1. Revoke Compromised Secrets ✅
 
 ### Gemini API Key
-- [x] Revoked key: `AIzaSyBWmOawPn4QUP21rX6EE6_0oyF7WJY2wJ0`
+- [x] Revoked key: `YOUR_REVOKED_GEMINI_KEY`
 - [x] Deleted from Google AI Studio
 
 ### Supabase Keys
@@ -118,7 +118,7 @@ git log --all --oneline --name-only --full-history | grep "\.env$"
 # Should return nothing
 
 # 2. No old secrets in history
-git log --all -S "AIzaSyBWmOawPn4QUP21rX6EE6_0oyF7WJY2wJ0"
+git log --all -S "YOUR_REVOKED_GEMINI_KEY"
 # Should return nothing
 
 # 3. Check current status
