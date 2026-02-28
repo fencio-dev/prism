@@ -65,7 +65,7 @@ class Config:
     data_plane_url: str = os.getenv("DATA_PLANE_URL", "localhost:50051")
 
     # Chroma Configuration
-    CHROMA_URL: str = os.getenv("CHROMA_URL", "/Users/sid/Projects/guard/data/chroma_data")
+    CHROMA_URL: str = os.getenv("CHROMA_URL", str(PROJECT_ROOT / "data" / "chroma_data"))
     CHROMA_COLLECTION_PREFIX: str = os.getenv("CHROMA_COLLECTION_PREFIX", "rules_")
 
     # Canonicalization Configuration (v2)

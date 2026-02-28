@@ -87,10 +87,10 @@ else
 fi
 
 # Check if secrets are still in history
-if git log --all -S "AIzaSyBWmOawPn4QUP21rX6EE6_0oyF7WJY2wJ0" --oneline | head -1 > /dev/null; then
+if git log --all -S "YOUR_REVOKED_GEMINI_KEY" --oneline | head -1 > /dev/null; then
     echo -e "${YELLOW}WARNING: Old Gemini API key still found in history${NC}"
     echo "This may be in other files. Checking..."
-    git log --all -S "AIzaSyBWmOawPn4QUP21rX6EE6_0oyF7WJY2wJ0" --name-only --oneline | head -20
+    git log --all -S "YOUR_REVOKED_GEMINI_KEY" --name-only --oneline | head -20
 else
     echo "✓ Old Gemini API key not found in history"
 fi

@@ -59,7 +59,7 @@ help:
 	@echo "  make run-mgmt no-mcp   Run management-plane only (skip MCP)"
 	@echo ""
 	@echo "Building:"
-	@echo "  make build-rust       Build Rust semantic-sandbox library"
+	@echo "  make build-rust       Build Rust data-plane library"
 	@echo "  make build-data       Build data-plane (bridge-server)"
 	@echo ""
 	@echo "Code Quality:"
@@ -70,15 +70,15 @@ install:
 	@echo "Installing Python dependencies..."
 	uv sync --all-packages
 	@echo "Building Rust component..."
-	cd semantic-sandbox && cargo build --release
+	cd data_plane/tupl_dp/bridge && cargo build --release
 	@echo "Building data-plane..."
 	cd data_plane/tupl_dp/bridge && cargo build --release
 	@echo "✅ Setup complete!"
 
 test:
 	@echo "Running all tests..."
-	uv run pytest management-plane/tests/ -v
-	cd semantic-sandbox && cargo test
+	uv run pytest management_plane/tests/ -v
+	cd data_plane/tupl_dp/bridge && cargo test
 
 test-mgmt:
 	@echo "Running management-plane tests..."
@@ -86,18 +86,17 @@ test-mgmt:
 
 test-sdk:
 	@echo "Running Python SDK tests..."
-	cd tupl_sdk/python && uv run pytest tests/ -v
+	@echo "No standalone SDK tests found in this repository"
 
 test-rust:
 	@echo "Running Rust tests..."
-	cd semantic-sandbox && cargo test
+	cd data_plane/tupl_dp/bridge && cargo test
 
 clean:
 	@echo "Cleaning build artifacts..."
 	rm -rf .venv
 	rm -rf **/__pycache__
 	rm -rf **/.pytest_cache
-	rm -rf semantic-sandbox/target
 	rm -rf data_plane/tupl_dp/bridge/target
 	rm -rf **/*.egg-info
 	rm -rf .uv
@@ -176,9 +175,9 @@ run-all:
 	wait
 
 build-rust:
-	@echo "Building Rust semantic-sandbox..."
-	cd semantic-sandbox && cargo build --release
-	@echo "✅ Built: semantic-sandbox/target/release/libsemantic_sandbox.dylib"
+	@echo "Building Rust data-plane library..."
+	cd data_plane/tupl_dp/bridge && cargo build --release
+	@echo "✅ Built: data_plane/tupl_dp/bridge/target/release"
 
 build-data:
 	@echo "Building data-plane (bridge-server)..."

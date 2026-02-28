@@ -14,8 +14,7 @@ dependencies = [
 
 [tool.uv.workspace]
 members = [
-    "management-plane",
-    "tupl_sdk/python",
+    "management_plane",
 ]
 
 [dependency-groups]

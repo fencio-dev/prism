@@ -296,7 +296,7 @@ def build_weather_agent():
 **Updated**: `weather_agent/.env`
 
 ```bash
-GOOGLE_API_KEY=AIzaSyBWmOawPn4QUP21rX6EE6_0oyF7WJY2wJ0
+GOOGLE_API_KEY=<REDACTED_GEMINI_KEY>
 TUPL_TOKEN=t_<get-from-console>
 ```
 

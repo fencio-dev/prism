@@ -1,6 +1,6 @@
-# Guard
+# Prism
 
-Guard is a local policy enforcement stack with:
+Prism is a local policy enforcement stack with:
 - Management Plane (FastAPI)
 - Data Plane (Rust gRPC)
 - MCP server
@@ -58,7 +58,7 @@ data/logs/management-plane.log \
 
 ## Embeddings and Training
 
-- Guard uses a SentenceTransformer embedding model in the management plane.
+- Prism uses a SentenceTransformer embedding model in the management plane.
 - The current encoder default in code is `redis/langcache-embed-v3-small`.
 - Build Dataset downloads JSONL with labeled slice feedback (`intent_text`, `anchor_text`, `similarity`, `threshold`, `feedback_score`, `rationale`).
 - You can use this JSONL to fine-tune or evaluate your own embedding model on Hugging Face or your own VPS training setup.

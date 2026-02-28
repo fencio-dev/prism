@@ -1,14 +1,14 @@
-# Contributing to Fencio
+# Contributing to Prism
 
-Thank you for your interest in contributing to Fencio! We welcome contributions from the community.
+Thank you for your interest in contributing to Prism! We welcome contributions from the community.
 
 ## Getting Started
 
 1. **Fork the repository** on GitHub
 2. **Clone your fork** locally:
    ```bash
-   git clone https://github.com/YOUR_USERNAME/fencio.git
-   cd fencio
+   git clone https://github.com/YOUR_USERNAME/prism.git
+   cd prism
    ```
 3. **Create a branch** for your changes:
    ```bash
@@ -37,14 +37,10 @@ cd data_plane/tupl_dp/bridge
 cargo build
 cargo test
 
-# Frontend (Console)
-cd console
+# Frontend (UI)
+cd ui
 npm install
 npm run dev
-
-# Full stack
-cd deployment
-./deploy-local.sh
 ```
 
 ## Making Changes
@@ -133,7 +129,7 @@ See [SECURITY.md](SECURITY.md) for responsible disclosure process.
 
 - GitHub Discussions: Ask questions and share ideas
 - Documentation: [docs/](docs/)
-- SDK Reference: [sdk/python/README.md](sdk/python/README.md)
+- Project README: [README.md](README.md)
 
 ## License
 
@@ -141,4 +137,4 @@ By contributing, you agree that your contributions will be licensed under the MI
 
 ---
 
-Thank you for contributing to Fencio! 🎉
+Thank you for contributing to Prism! 🎉
