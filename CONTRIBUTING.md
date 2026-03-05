@@ -22,25 +22,34 @@ Thank you for your interest in contributing to Prism! We welcome contributions f
 - Python 3.12+
 - Rust 1.70+
 - Node.js 18+
-- Docker and Docker Compose
 
-### Local Development
+### Install Dependencies
 
 ```bash
-# Backend (Management Plane)
-cd management_plane
-pip install -e ".[dev]"
-pytest tests/ -v
+make install
+```
 
-# Data Plane (Rust)
-cd data_plane/tupl_dp/bridge
-cargo build
-cargo test
+This installs all Python and Rust dependencies.
 
-# Frontend (UI)
+### Run the Stack
+
+```bash
+# Backend: data plane + MCP server + management plane
+make run-all
+
+# Frontend (in a second terminal)
 cd ui
 npm install
 npm run dev
+```
+
+Individual services:
+
+```bash
+make run-mgmt     # Management plane only (port 8001)
+make run-data     # Data plane only (port 50051)
+make run-mcp      # MCP server only (port 3001)
+make build-rust   # Build the Rust data plane
 ```
 
 ## Making Changes
@@ -50,12 +59,6 @@ npm run dev
 - **Python**: Follow PEP 8, use `ruff` for linting
 - **Rust**: Use `rustfmt` and `clippy`
 - **TypeScript**: Follow project `.eslintrc` config
-
-### Testing
-
-- Add tests for new features
-- Ensure all tests pass before submitting PR
-- Aim for >80% code coverage for new code
 
 ### Commit Messages
 
@@ -69,10 +72,10 @@ Longer explanation if needed.
 Fixes #123
 ```
 
-**Types**: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
+**Types**: `feat`, `fix`, `docs`, `refactor`, `chore`
 
 **Examples**:
-- `feat(sdk): add hard-block mode option`
+- `feat(enforcement): add MODIFY outcome parameter rewriting`
 - `fix(data-plane): resolve memory leak in rule storage`
 - `docs(readme): update quick start guide`
 
@@ -84,19 +87,17 @@ Fixes #123
    - What problem does this solve?
    - How did you test it?
    - Any breaking changes?
-4. **Wait for review** - maintainers will review your PR
+4. **Wait for review** — maintainers will review your PR
 
 ## Pull Request Guidelines
 
-- Keep PRs focused - one feature/fix per PR
+- Keep PRs focused — one feature or fix per PR
 - Update documentation if needed
-- Add tests for new functionality
-- Ensure CI passes (tests, linting)
 - Be responsive to feedback
 
 ## Code Review Process
 
-1. Automated CI checks run (tests, linting, security scans)
+1. Automated linting checks run
 2. Maintainer reviews code
 3. Requested changes (if any)
 4. Approval and merge
@@ -137,4 +138,4 @@ By contributing, you agree that your contributions will be licensed under the MI
 
 ---
 
-Thank you for contributing to Prism! 🎉
+Thank you for contributing to Prism!

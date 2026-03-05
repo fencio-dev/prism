@@ -180,6 +180,7 @@ workspace/
 
 AGENTS.md
 .opencode
+.claude
 
 # Seed dataset (generated training data - not version controlled)
 data/seed/
