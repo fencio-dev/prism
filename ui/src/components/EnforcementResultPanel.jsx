@@ -1,5 +1,6 @@
 import { FlaskConical } from 'lucide-react';
 import PrismEmptyState from './PrismEmptyState';
+import { truncatePolicyName } from '../lib/utils';
 
 const SLICE_LABELS = ['action', 'resource', 'data', 'risk'];
 
@@ -219,8 +220,8 @@ function EvidenceTable({ evidence, policyMap }) {
                     <div>{policyName}</div>
                   )}
                   {entry.boundary_name && (
-                  <div style={{ color: 'var(--prism-text-secondary)', fontSize: 11, marginTop: policyName ? 2 : 0 }}>
-                      {entry.boundary_name}
+                    <div style={{ color: 'var(--prism-text-secondary)', fontSize: 11, marginTop: policyName ? 2 : 0 }}>
+                      {truncatePolicyName(entry.boundary_name)}
                     </div>
                   )}
                   {!policyName && !entry.boundary_name && (entry.boundary_id || '—')}

@@ -163,6 +163,8 @@ impl EnforcementEngine {
 
         // Layer is optional — default to "" which get_rules_for_layer treats as "match all".
         let layer = intent.layer_str().unwrap_or("");
+        let tenant_id = intent.tenant_id.clone();
+        let actor_id = intent.actor.id.clone();
 
         println!("Enforcing intent for layer: {}", layer);
 
@@ -267,7 +269,7 @@ impl EnforcementEngine {
 
         // 2. Query rules for this layer from Bridge
         let query_start = Instant::now();
-        let rules = self.get_rules_for_layer(layer)?;
+        let rules = self.get_rules_for_layer(layer, &actor_id, &tenant_id)?;
         let query_duration = query_start.elapsed().as_micros() as u64;
 
         if rules.is_empty() {
@@ -729,7 +731,7 @@ impl EnforcementEngine {
     }
 
     /// Query rules for a specific layer from Bridge
-    fn get_rules_for_layer(&self, layer: &str) -> Result<Vec<Arc<dyn RuleInstance>>, String> {
+    fn get_rules_for_layer(&self, layer: &str, actor_id: &str, tenant_id: &str) -> Result<Vec<Arc<dyn RuleInstance>>, String> {
         println!("Querying rules for layer: {}", layer);
 
         let requested_layer = if layer.is_empty() { None } else { Some(layer) };
@@ -739,6 +741,7 @@ impl EnforcementEngine {
             .all_rules()
             .into_iter()
             .filter(|rule| rule.is_enabled())
+            .filter(|rule| rule.scope().applies_to(actor_id) || rule.scope().applies_to(tenant_id))
             .filter(|rule| match (rule.layer(), requested_layer) {
                 (None, _) => true,
                 (Some(rule_layer), Some(requested)) => rule_layer == requested,
@@ -748,7 +751,7 @@ impl EnforcementEngine {
 
         filtered.sort_by(|a, b| b.priority().cmp(&a.priority()));
 
-        println!("Found {} rules for layer {}", filtered.len(), layer);
+        println!("Found {} rules for layer {} (actor: {}, tenant: {})", filtered.len(), layer, actor_id, tenant_id);
         Ok(filtered)
     }
 

@@ -5,6 +5,7 @@ import { getPolicy } from '../api/policies';
 import EnforcementResultPanel from './EnforcementResultPanel';
 import PrismEmptyState from './PrismEmptyState';
 import RunAnchorComparisonPanel from './RunAnchorComparisonPanel';
+import { truncatePolicyName } from '../lib/utils';
 
 function formatTime(ms) {
   if (ms == null) return '—';
@@ -358,7 +359,7 @@ export default function TelemetryTable() {
                          >
                           <div className="mb-2 flex items-center justify-between gap-2">
                             <div className="text-sm font-semibold text-[var(--prism-text-primary)]">
-                              {entry.boundary_name || policy?.name || entry.boundary_id || 'Policy'}
+                              {truncatePolicyName(entry.boundary_name) || policy?.name || entry.boundary_id || 'Policy'}
                             </div>
                             <div className="text-xs text-[var(--prism-text-secondary)]">
                               {entry.decision === 1 ? 'matched' : 'no match'}

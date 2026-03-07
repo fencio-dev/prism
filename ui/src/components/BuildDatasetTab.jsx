@@ -5,6 +5,7 @@ import { getPolicy } from '../api/policies';
 import RunAnchorComparisonPanel from './RunAnchorComparisonPanel';
 import PrismEmptyState from './PrismEmptyState';
 import { Slider } from './ui/slider';
+import { truncatePolicyName } from '../lib/utils';
 
 const BADGE_COLORS = {
   ALLOW: 'border-green-600/30 bg-green-100 text-green-700',
@@ -479,7 +480,7 @@ function RunDetail({ call }) {
                     style={{ whiteSpace: 'normal', wordBreak: 'break-word' }}
                   >
                     <div className="mb-1 font-medium text-[var(--prism-text-primary)]">
-                      {item.boundary_name || item.boundary_id || '—'}
+                      {truncatePolicyName(item.boundary_name) || item.boundary_id || '—'}
                     </div>
                     <div className="text-xs text-[var(--prism-text-muted)]">
                       {item.effect ?? '—'} · {item.decision === 1 ? 'allowed' : 'blocked'}
