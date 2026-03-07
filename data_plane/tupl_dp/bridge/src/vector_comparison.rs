@@ -130,10 +130,17 @@ pub fn compare_intent_vs_rule(
     // Decision logic based on mode
     let decision = match decision_mode {
         DecisionMode::MinMode => {
+            let counts = [
+                rule_vector.action_count,
+                rule_vector.resource_count,
+                rule_vector.data_count,
+                rule_vector.risk_count,
+            ];
             let all_pass = slice_similarities
                 .iter()
                 .zip(thresholds.iter())
-                .all(|(sim, thresh)| sim >= thresh);
+                .zip(counts.iter())
+                .all(|((sim, thresh), &count)| count == 0 || sim >= thresh);
 
             if all_pass { 1 } else { 0 }
         }

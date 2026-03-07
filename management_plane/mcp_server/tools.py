@@ -126,7 +126,7 @@ async def send_intent(
             tenant_id=auth_context.tenant_id,
             ts=time.time(),
             identity=AgentIdentity(
-                agent_id=tool_context.get("tool_name") or "mcp-agent",
+                agent_id=context.get("agent_id") or tool_context.get("tool_name") or "mcp-agent",
                 principal_id="mcp-agent",
                 actor_type="agent",
             ),

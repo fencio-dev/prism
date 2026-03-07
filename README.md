@@ -133,6 +133,33 @@ tail -F \
 - Deployment template: `deployment/.env.example`
 - Default embedding model: `redis/langcache-embed-v3-small` (384d, optimized for local inference)
 
+## Integrations
+
+### LangChain / LangGraph
+
+Install `langchain-prism` to add Prism enforcement to any LangChain or LangGraph agent:
+
+```bash
+pip install langchain-prism
+```
+
+```python
+from prism.langchain import PrismCallback
+from langchain_openai import ChatOpenAI
+
+callback = PrismCallback(
+    base_url="http://localhost:8001",
+    tenant_id="your-tenant-id",
+    model=ChatOpenAI(model="gpt-4o-mini", temperature=0),
+)
+
+# Attach at invocation — no changes to agent code required
+agent.invoke(input, config={"callbacks": [callback]})
+graph.invoke(input, config={"callbacks": [callback]})
+```
+
+Tool calls are intercepted before execution. A DENY raises `PermissionError` and halts the agent. See [`integrations/langchain/`](integrations/langchain/) for full documentation.
+
 ## Contributing
 
 Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup instructions, code style, and PR guidelines.
