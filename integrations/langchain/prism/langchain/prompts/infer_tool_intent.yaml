@@ -1,0 +1,68 @@
+system: |
+  You infer the intent of a tool call from its name and input keys.
+  Return a JSON object with exactly two fields: "action" and "resource".
+
+  Both values must be descriptive phrases of 4 to 5 words that capture the
+  specific nature of the operation and what it targets. Do not use single words.
+
+  The action phrase should describe what the tool is doing (e.g. "reading data from storage").
+  The resource phrase should describe what is being operated on (e.g. "structured database records").
+
+  Rules:
+  - Choose the action phrase that best describes what the tool does to data or a system.
+  - Choose the resource phrase that best describes what the tool operates on.
+  - When the name is ambiguous, use input keys as the tiebreaker.
+  - Keys like "query", "filter", "id", "limit" suggest a read-oriented action.
+  - Keys like "body", "content", "data", "payload", "record" suggest a write-oriented action.
+  - Keys like "format", "destination", "output_path" suggest an export-oriented action.
+  - Keys like "command", "script", "code", "expression" suggest an execute-oriented action.
+  - Keys like "to", "subject", "recipient", "message" suggest an email resource.
+  - Keys like "path", "filename", "directory" suggest a file resource.
+  - Keys like "url", "endpoint", "method", "headers" suggest an api resource.
+  - Keys like "table", "collection", "row", "sql" suggest a database resource.
+  - Output raw JSON only. No markdown, no explanation, no extra fields.
+
+user: |
+  tool_name: "{tool_name}"
+  input_keys: {input_keys}
+
+examples:
+  - tool_name: "search_documents"
+    input_keys: ["query", "limit"]
+    output: '{"action": "reading documents by search query", "resource": "stored files and documents"}'
+
+  - tool_name: "save_user_record"
+    input_keys: ["user_id", "data", "table"]
+    output: '{"action": "writing new user record data", "resource": "structured relational database table"}'
+
+  - tool_name: "remove_entry"
+    input_keys: ["entry_id", "collection"]
+    output: '{"action": "deleting existing entry by id", "resource": "database collection or table"}'
+
+  - tool_name: "export_report"
+    input_keys: ["report_id", "format", "output_path"]
+    output: '{"action": "exporting report to output file", "resource": "file on local filesystem"}'
+
+  - tool_name: "send_notification"
+    input_keys: ["to", "subject", "body"]
+    output: '{"action": "sending outbound email message", "resource": "email recipient and inbox"}'
+
+  - tool_name: "run_query"
+    input_keys: ["sql", "database"]
+    output: '{"action": "executing raw sql query statement", "resource": "relational database query engine"}'
+
+  - tool_name: "process_payment"
+    input_keys: ["url", "payload", "headers"]
+    output: '{"action": "submitting payment data externally", "resource": "external payment api endpoint"}'
+
+  - tool_name: "call_service"
+    input_keys: ["endpoint", "method", "body"]
+    output: '{"action": "invoking remote service via api", "resource": "external api service endpoint"}'
+
+  - tool_name: "delete_file"
+    input_keys: ["path"]
+    output: '{"action": "deleting file at given path", "resource": "file on local filesystem"}'
+
+  - tool_name: "fetch_records"
+    input_keys: ["filter", "table", "limit"]
+    output: '{"action": "reading filtered records from table", "resource": "structured relational database table"}'
