@@ -69,7 +69,9 @@ class Config:
     CHROMA_COLLECTION_PREFIX: str = os.getenv("CHROMA_COLLECTION_PREFIX", "rules_")
 
     # Canonicalization Configuration (v2)
-    CANONICALIZATION_ENABLED: bool = os.getenv("CANONICALIZATION_ENABLED", "true").lower() == "true"
+    # NOTE: Canonicalization requires BERT model files. Set to "true" after running model setup.
+    # For first-time setup, this defaults to false to allow the server to start.
+    CANONICALIZATION_ENABLED: bool = os.getenv("CANONICALIZATION_ENABLED", "false").lower() == "true"
     CANONICALIZATION_CONFIG_PATH: str | None = os.getenv("CANONICALIZATION_CONFIG_PATH")
     CANONICALIZATION_LOG_DIR: str = os.getenv(
         "CANONICALIZATION_LOG_DIR",

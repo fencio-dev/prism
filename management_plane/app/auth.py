@@ -241,6 +241,7 @@ async def get_current_tenant(
     1. X-Tenant-Id header (guard.fencio.dev → MP via nginx)
     2. API key (SDK → MP via Authorization: Bearer <api_key>)
     3. JWT token (legacy, direct API calls)
+    4. Local dev mode (when Supabase not configured)
 
     Returns:
         User object with tenant identity
@@ -261,6 +262,18 @@ async def get_current_tenant(
 
         # Fall through to JWT validation if API key validation fails
         # This allows the same endpoint to support both API keys and JWTs
+
+    # Local development mode: allow unauthenticated access when Supabase is not configured
+    if not SUPABASE_URL and not SUPABASE_JWT_SECRET and not SUPABASE_SERVICE_KEY:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning("Running in LOCAL DEV MODE - authentication bypassed (Supabase not configured)")
+        return User(
+            id="local-dev-user",
+            aud="local-dev",
+            role="authenticated",
+            email="dev@localhost"
+        )
 
     # JWT auth (SDK, legacy)
     return await get_current_user(token, x_service_auth, x_user_id)
