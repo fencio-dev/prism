@@ -110,7 +110,7 @@ class GuardMCPClient:
 
     def __init__(
         self,
-        server_url: str = "http://localhost:3001/mcp",
+        server_url: str = "http://localhost:47000/mcp",
         api_key: Optional[str] = None,
         tenant_id: Optional[str] = None,
         user_id: Optional[str] = None,

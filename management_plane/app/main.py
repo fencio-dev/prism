@@ -9,15 +9,18 @@ import asyncio
 import logging
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import AsyncGenerator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from .settings import config
 from .endpoints import enforcement_v2, health, policies_v2, telemetry
 from .services import session_store
+from mcp_server.app import mcp, initialize_tools
 
 # Configure logging
 logging.basicConfig(
@@ -104,6 +107,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Shutting down Management Plane")
 
 
+initialize_tools()
+
 # Create FastAPI application
 app = FastAPI(
     title=config.APP_NAME,
@@ -126,6 +131,12 @@ app.include_router(health.router)
 app.include_router(enforcement_v2.router, prefix=config.API_V2_PREFIX)
 app.include_router(policies_v2.router, prefix=config.API_V2_PREFIX)
 app.include_router(telemetry.router, prefix=config.API_V2_PREFIX)
+app.mount("/mcp", mcp.streamable_http_app())
+
+_ui_dist = Path(__file__).parent.parent.parent / "ui" / "dist"
+if _ui_dist.is_dir():
+    app.mount("/", StaticFiles(directory=str(_ui_dist), html=True), name="ui")
+    logger.info("UI static files mounted from %s", _ui_dist)
 
 
 # Global exception handler
@@ -149,23 +160,6 @@ async def global_exception_handler(request, exc: Exception) -> JSONResponse:
             "type": "internal_error",
         },
     )
-
-
-# Root endpoint
-@app.get("/", tags=["root"])
-async def root() -> dict[str, str]:
-    """
-    Root endpoint.
-
-    Returns:
-        Basic API information
-    """
-    return {
-        "name": config.APP_NAME,
-        "version": config.VERSION,
-        "status": "running",
-        "docs": "/docs",
-    }
 
 
 if __name__ == "__main__":

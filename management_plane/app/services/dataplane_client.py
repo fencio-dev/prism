@@ -5,6 +5,7 @@ Internal client for Management Plane to communicate with Rust Data Plane.
 """
 
 import logging
+import os
 import grpc
 import json
 from typing import Optional, List
@@ -37,7 +38,7 @@ class DataPlaneClient:
     """
     def __init__(
         self,
-        url: str = "localhost:50051",
+        url: str = f"localhost:{os.getenv('DATA_PLANE_PORT', '50051')}",
         timeout: float = 5.0,
         insecure: bool = True,
         token: Optional[str] = None,

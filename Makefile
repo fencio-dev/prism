@@ -51,13 +51,11 @@ help:
 	@echo "  make test-rust        Run Rust tests"
 	@echo ""
 	@echo "Running:"
-	@echo "  make run-mgmt         Run management-plane server (dev mode, port 8001)"
+	@echo "  make run-mgmt         Run management-plane server (dev mode, port 47000, includes /mcp)"
 	@echo "  make run-mgmt PORT=9000  Run with custom port"
 	@echo "  make run-data         Run data-plane server (port 50051)"
-	@echo "  make run-mcp          Run MCP server (port 3001)"
-	@echo "  make run-all          Run both management-plane AND data-plane"
-	@echo "  make run-all PORT=9000   Run both with custom mgmt port"
-	@echo "  make run-mgmt no-mcp   Run management-plane only (skip MCP)"
+	@echo "  make run-mcp          Run MCP server standalone (port 3001, dev only)"
+	@echo "  make run-all          Run data-plane + management-plane (MCP embedded)"
 	@echo ""
 	@echo "Building:"
 	@echo "  make build-rust       Build Rust data-plane library"
@@ -124,20 +122,9 @@ generate-proto:
 	@echo "✅ gRPC stubs generated!"
 
 run-mgmt: generate-proto
-	@echo "🚀 Starting management-plane server on port $(or $(PORT),8001)..."
+	@echo "🚀 Starting management-plane server on port $(or $(PRISM_PORT),$(PORT),47000)..."
 	@mkdir -p $(LOG_DIR)
-ifeq ($(NO_MCP),1)
-	@echo "⏭️  MCP server disabled (no-mcp flag set)"
-else
-	@echo "📍 Starting MCP server on port 3001..."
-	@(cd management_plane && MANAGEMENT_PLANE_URL=http://localhost:$(or $(PORT),8001) uv run python -m mcp_server >> $(LOG_DIR)/mcp-server.log 2>&1) & \
-	MCP_PID=$$!; \
-	echo "   MCP server PID: $$MCP_PID"; \
-	echo "   Logs: $(LOG_DIR)/mcp-server.log"
-	$(call wait_for_mcp_server,$(MCP_HEALTH_CHECK_TIMEOUT))
-endif
-	@echo "📍 Starting management-plane server..."
-	cd management_plane && MGMT_PLANE_PORT=$(or $(PORT),8001) uv run uvicorn app.main:app --host 0.0.0.0 --port $(or $(PORT),8001)
+	cd management_plane && PRISM_PORT=$(or $(PRISM_PORT),$(PORT),47000) DATA_PLANE_PORT=$(or $(DATA_PLANE_PORT),50051) uv run uvicorn app.main:app --host 0.0.0.0 --port $(or $(PRISM_PORT),$(PORT),47000)
 
 run-data:
 	@echo "🚀 Starting data-plane server on port 50051..."
@@ -151,43 +138,29 @@ run-mcp: generate-proto
 
 run-all: generate-proto
 	@echo "🚀 Starting all services..."
-	@echo "   - Data Plane:       port 50051"
-	@echo "   - MCP Server:       port 3001"
-	@echo "   - Management Plane: port $(or $(PORT),8001)"
+	@echo "   - Data Plane:       port $(or $(DATA_PLANE_PORT),50051)"
+	@echo "   - Management Plane: port $(or $(PRISM_PORT),47000)  (includes /mcp)"
 	@echo ""
 	@echo "📝 Logs will be written to:"
 	@echo "   - Data Plane:       $(LOG_DIR)/data-plane.log"
-	@echo "   - MCP Server:       $(LOG_DIR)/mcp-server.log"
 	@echo "   - Management Plane: $(LOG_DIR)/management-plane.log"
 	@echo ""
 	@mkdir -p $(LOG_DIR)
 	@trap 'echo "🛑 Shutting down all services..."; kill 0' EXIT; \
-	echo "📍 Step 1/3: Starting data-plane on port 50051..."; \
-	(mkdir -p data && cd data_plane/tupl_dp/bridge && HITLOG_SQLITE_PATH=$(PWD)/data/hitlogs.db MANAGEMENT_PLANE_URL=http://localhost:$(or $(PORT),8001)/api/v2 cargo run --bin bridge-server > $(LOG_DIR)/data-plane.log 2>&1) & \
+	echo "📍 Step 1/2: Starting data-plane on port $(or $(DATA_PLANE_PORT),50051)..."; \
+	(mkdir -p data && cd data_plane/tupl_dp/bridge && DATA_PLANE_PORT=$(or $(DATA_PLANE_PORT),50051) HITLOG_SQLITE_PATH=$(PWD)/data/hitlogs.db MANAGEMENT_PLANE_URL=http://localhost:$(or $(PRISM_PORT),47000)/api/v2 cargo run --bin bridge-server > $(LOG_DIR)/data-plane.log 2>&1) & \
 	DATA_PLANE_PID=$$!; \
-	echo "⏳ Waiting for data-plane on port 50051 (timeout: $(DATA_PLANE_HEALTH_CHECK_TIMEOUT)s)..."; \
+	echo "⏳ Waiting for data-plane on port $(or $(DATA_PLANE_PORT),50051) (timeout: $(DATA_PLANE_HEALTH_CHECK_TIMEOUT)s)..."; \
 	for i in $$(seq 1 $(DATA_PLANE_HEALTH_CHECK_TIMEOUT)); do \
-		if nc -z localhost 50051 2>/dev/null; then \
-			echo "✅ Data-plane on port 50051 is ready"; \
+		if nc -z localhost $(or $(DATA_PLANE_PORT),50051) 2>/dev/null; then \
+			echo "✅ Data-plane on port $(or $(DATA_PLANE_PORT),50051) is ready"; \
 			break; \
 		fi; \
 		sleep 1; \
 	done; \
 	echo ""; \
-	echo "📍 Step 2/3: Starting MCP server on port 3001..."; \
-	(cd management_plane && MANAGEMENT_PLANE_URL=http://localhost:$(or $(PORT),8001) uv run python -m mcp_server >> $(LOG_DIR)/mcp-server.log 2>&1) & \
-	MCP_PID=$$!; \
-	echo "⏳ Waiting for MCP server on port 3001 (timeout: $(MCP_HEALTH_CHECK_TIMEOUT)s)..."; \
-	for i in $$(seq 1 $(MCP_HEALTH_CHECK_TIMEOUT)); do \
-		if curl -s -H "Accept: text/event-stream" http://localhost:3001/mcp > /dev/null 2>&1; then \
-			echo "✅ MCP server on port 3001 is ready"; \
-			break; \
-		fi; \
-		sleep 1; \
-	done; \
-	echo ""; \
-	echo "📍 Step 3/3: Starting management-plane on port $(or $(PORT),8001)..."; \
-	(cd management_plane && MGMT_PLANE_PORT=$(or $(PORT),8001) uv run uvicorn app.main:app --host 0.0.0.0 --port $(or $(PORT),8001) >> $(LOG_DIR)/management-plane.log 2>&1) & \
+	echo "📍 Step 2/2: Starting management-plane on port $(or $(PRISM_PORT),47000)..."; \
+	(cd management_plane && PRISM_PORT=$(or $(PRISM_PORT),47000) DATA_PLANE_PORT=$(or $(DATA_PLANE_PORT),50051) uv run uvicorn app.main:app --host 0.0.0.0 --port $(or $(PRISM_PORT),47000) >> $(LOG_DIR)/management-plane.log 2>&1) & \
 	MGMT_PID=$$!; \
 	echo ""; \
 	echo "✅ All services started! Press Ctrl+C to stop."; \

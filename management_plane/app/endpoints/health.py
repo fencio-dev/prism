@@ -67,7 +67,7 @@ async def health_check() -> HealthResponse:
 
     # Check Data Plane gRPC connectivity
     try:
-        grpc_url = os.getenv("DATA_PLANE_URL", "localhost:50051")
+        grpc_url = os.getenv("DATA_PLANE_URL", f"localhost:{os.getenv('DATA_PLANE_PORT', '50051')}")
         channel = grpc.insecure_channel(grpc_url)
         grpc.channel_ready_future(channel).result(timeout=5)
         channel.close()
