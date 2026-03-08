@@ -1,4 +1,4 @@
-.PHONY: help install test test-mgmt test-sdk clean run-mgmt run-data run-all run-mcp build-rust build-data lint format no-mcp
+.PHONY: help install test test-mgmt test-sdk clean run-mgmt run-data run-all run-mcp build-rust build-data lint format no-mcp generate-proto
 
 ROOT := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 LOG_DIR := $(ROOT)/data/logs
@@ -41,6 +41,7 @@ help:
 	@echo ""
 	@echo "Setup:"
 	@echo "  make install          Install all dependencies (Python + Rust)"
+	@echo "  make generate-proto   Generate Python gRPC stubs from protobuf"
 	@echo "  make clean            Remove build artifacts and cache"
 	@echo ""
 	@echo "Testing:"
@@ -65,6 +66,8 @@ help:
 	@echo "Code Quality:"
 	@echo "  make lint             Run linters (when configured)"
 	@echo "  make format           Format code (when configured)"
+	@echo ""
+	@echo "Note: gRPC stubs are auto-generated when running services (run-mgmt, run-mcp, run-all)"
 
 install:
 	@echo "Installing Python dependencies..."
@@ -101,9 +104,26 @@ clean:
 	rm -rf **/*.egg-info
 	rm -rf .uv
 	rm -f uv.lock
+	rm -rf management_plane/app/generated
 	@echo "✅ Cleaned!"
 
-run-mgmt:
+generate-proto:
+	@echo "🔧 Generating Python gRPC stubs from protobuf..."
+	@mkdir -p management_plane/app/generated
+	@uv run python -m grpc_tools.protoc \
+		-I data_plane/proto \
+		--python_out=management_plane/app/generated \
+		--grpc_python_out=management_plane/app/generated \
+		data_plane/proto/rule_installation.proto
+	@# Fix the import in the grpc file to use relative import
+	@sed -i.bak 's/^import rule_installation_pb2/from . import rule_installation_pb2/' management_plane/app/generated/rule_installation_pb2_grpc.py
+	@rm -f management_plane/app/generated/rule_installation_pb2_grpc.py.bak
+	@echo "# Generated gRPC code from protobuf definitions" > management_plane/app/generated/__init__.py
+	@echo "from .rule_installation_pb2 import *" >> management_plane/app/generated/__init__.py
+	@echo "from .rule_installation_pb2_grpc import *" >> management_plane/app/generated/__init__.py
+	@echo "✅ gRPC stubs generated!"
+
+run-mgmt: generate-proto
 	@echo "🚀 Starting management-plane server on port $(or $(PORT),8001)..."
 	@mkdir -p $(LOG_DIR)
 ifeq ($(NO_MCP),1)
@@ -124,12 +144,12 @@ run-data:
 	@mkdir -p $(LOG_DIR)
 	mkdir -p data && cd data_plane/tupl_dp/bridge && HITLOG_SQLITE_PATH=$(PWD)/data/hitlogs.db cargo run --bin bridge-server
 
-run-mcp:
+run-mcp: generate-proto
 	@echo "🚀 Starting MCP server on port 3001..."
 	@mkdir -p $(LOG_DIR)
 	cd management_plane && uv run python -m mcp_server
 
-run-all:
+run-all: generate-proto
 	@echo "🚀 Starting all services..."
 	@echo "   - Data Plane:       port 50051"
 	@echo "   - MCP Server:       port 3001"
