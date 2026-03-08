@@ -25,7 +25,7 @@ import httpx
 from rich.console import Console
 from rich.table import Table
 from rich.prompt import Prompt
-from dotenv import load_dotenv, set_key
+from dotenv import load_dotenv, set_key, dotenv_values
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Setup
@@ -64,16 +64,10 @@ console = Console()
 
 def _load_env() -> dict:
     """Load .env and return as dict."""
-    env: dict = {}
     if ENV_FILE.exists():
         load_dotenv(ENV_FILE)
-        with open(ENV_FILE) as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    k, _, v = line.partition("=")
-                    env[k.strip()] = v.strip()
-    return env
+        return dict(dotenv_values(ENV_FILE))
+    return {}
 
 
 def _tenant_id() -> str:
@@ -265,6 +259,8 @@ def config():
     console.print("Get a key at: https://aistudio.google.com/app/apikey\n")
 
     while True:
+        if not sys.stdin.isatty():
+            sys.stdin = open("/dev/tty", "r")
         new_key = Prompt.ask("Enter new GOOGLE_API_KEY (leave blank to keep current)")
         if not new_key:
             if not current_key:
