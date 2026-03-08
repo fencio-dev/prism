@@ -68,15 +68,6 @@ class Config:
     CHROMA_URL: str = os.getenv("CHROMA_URL", str(PROJECT_ROOT / "data" / "chroma_data"))
     CHROMA_COLLECTION_PREFIX: str = os.getenv("CHROMA_COLLECTION_PREFIX", "rules_")
 
-    # Canonicalization Configuration (v2)
-    # NOTE: Canonicalization requires BERT model files. Set to "true" after running model setup.
-    # For first-time setup, this defaults to false to allow the server to start.
-    CANONICALIZATION_ENABLED: bool = os.getenv("CANONICALIZATION_ENABLED", "false").lower() == "true"
-    CANONICALIZATION_CONFIG_PATH: str | None = os.getenv("CANONICALIZATION_CONFIG_PATH")
-    CANONICALIZATION_LOG_DIR: str = os.getenv(
-        "CANONICALIZATION_LOG_DIR",
-        str(PROJECT_ROOT / "data" / "logs"),
-    )
     SESSION_DB_PATH: str = os.getenv(
         "SESSION_DB_PATH",
         str(PROJECT_ROOT / "data" / "sessions.db"),
@@ -86,53 +77,13 @@ class Config:
         "POLICY_AUDIT_LOG_DIR",
         str(PROJECT_ROOT / "data" / "logs"),
     )
-    BERT_MODEL_PATH: str = os.getenv(
-        "BERT_MODEL_PATH",
-        "management_plane/models/canonicalizer_tinybert_v1.0/model_optimized.onnx",
-    )
-    BERT_TOKENIZER_PATH: str = os.getenv(
-        "BERT_TOKENIZER_PATH",
-        "management_plane/models/canonicalizer_tinybert_v1.0/tokenizer",
-    )
-    BERT_CONFIDENCE_HIGH: float = float(os.getenv("BERT_CONFIDENCE_HIGH", "0.9"))
-    BERT_CONFIDENCE_MEDIUM: float = float(os.getenv("BERT_CONFIDENCE_MEDIUM", "0.7"))
 
     @classmethod
     def validate(cls) -> None:
         """
         Validate configuration at startup.
-
-        Raises:
-            FileNotFoundError: If Rust library is not found.
         """
-        if cls.CANONICALIZATION_ENABLED:
-            model_path = Path(cls.BERT_MODEL_PATH)
-            tokenizer_path = Path(cls.BERT_TOKENIZER_PATH)
-
-            if not model_path.is_absolute():
-                model_path = cls.PROJECT_ROOT / model_path
-
-            if not tokenizer_path.is_absolute():
-                tokenizer_path = cls.PROJECT_ROOT / tokenizer_path
-
-            if not model_path.exists():
-                raise FileNotFoundError(
-                    f"BERT model not found at {model_path}. "
-                    "Set BERT_MODEL_PATH to the model .onnx path."
-                )
-
-            if not tokenizer_path.exists():
-                raise FileNotFoundError(
-                    f"BERT tokenizer not found at {tokenizer_path}. "
-                    "Set BERT_TOKENIZER_PATH to the tokenizer directory."
-                )
-
-            label_maps_path = model_path.parent / "label_maps.json"
-            if not label_maps_path.exists():
-                raise FileNotFoundError(
-                    f"BERT label maps not found at {label_maps_path}. "
-                    "Expected label_maps.json alongside the ONNX model."
-                )
+        pass
 
     @classmethod
     def get_google_api_key(cls) -> str:

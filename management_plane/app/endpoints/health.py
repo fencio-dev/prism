@@ -12,7 +12,6 @@ import grpc
 from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel, Field
 
-from ..auth import User, get_current_user
 from ..settings import config
 
 logger = logging.getLogger(__name__)
