@@ -64,8 +64,8 @@ async def _call_enforce(
     if management_plane_url:
         base_url = management_plane_url.rstrip("/")
     else:
-        mgmt_port = os.getenv("MGMT_PLANE_PORT", "8001")
-        base_url = f"http://localhost:{mgmt_port}".rstrip("/")
+        prism_port = os.getenv("PRISM_PORT", "47000")
+        base_url = f"http://localhost:{prism_port}".rstrip("/")
     url = f"{base_url}/api/v2/enforce"
 
     try:

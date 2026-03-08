@@ -28,7 +28,7 @@ class Config:
     API_V1_PREFIX: str = "/api/v1"
     API_V2_PREFIX: str = "/api/v2"
     HOST: str = os.getenv("MGMT_PLANE_HOST", "0.0.0.0")
-    PORT: int = int(os.getenv("MGMT_PLANE_PORT", "8001"))
+    PORT: int = int(os.getenv("PRISM_PORT", "47000"))
 
     # CORS Configuration
     CORS_ORIGINS: list[str] = [
@@ -62,7 +62,7 @@ class Config:
     GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
 
     # Data Plane Configuration
-    data_plane_url: str = os.getenv("DATA_PLANE_URL", "localhost:50051")
+    data_plane_url: str = os.getenv("DATA_PLANE_URL", f"localhost:{os.getenv('DATA_PLANE_PORT', '50051')}")
 
     # Chroma Configuration
     CHROMA_URL: str = os.getenv("CHROMA_URL", str(PROJECT_ROOT / "data" / "chroma_data"))

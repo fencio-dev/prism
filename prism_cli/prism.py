@@ -35,9 +35,28 @@ PRISM_HOME = Path(os.environ.get("PRISM_HOME", Path.home() / ".prism"))
 ENV_FILE = PRISM_HOME / ".env"
 LOG_DIR = PRISM_HOME / "data" / "logs"
 
-MGMT_URL = "http://localhost:8001"
-MCP_URL = "http://localhost:3001"
-DATA_PLANE_PORT = 50051
+GATEWAY_PORT_CANDIDATES = [47000, 47001, 47002]
+GRPC_PORT_CANDIDATES    = [50051, 50052, 50053]
+
+
+def _prism_port() -> int:
+    return int(_load_env().get("PRISM_PORT", "47000"))
+
+
+def _data_plane_port() -> int:
+    return int(_load_env().get("DATA_PLANE_PORT", "50051"))
+
+
+def _prism_url() -> str:
+    return f"http://localhost:{_prism_port()}"
+
+
+def find_free_port(candidates: list[int]) -> int:
+    for port in candidates:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            if s.connect_ex(("localhost", port)) != 0:
+                return port
+    raise RuntimeError(f"All preferred ports are busy: {candidates}")
 
 app = typer.Typer(help="Prism — local LLM security policy enforcement", add_completion=False)
 console = Console()
@@ -87,6 +106,18 @@ def start():
         console.print(f"[red]Prism home not found at {PRISM_HOME}. Run the installer first.[/red]")
         raise typer.Exit(1)
 
+    # Guard against double-start
+    current_url = _prism_url()
+    if _http_ok(current_url + "/health"):
+        console.print(f"[yellow]Prism already running at {current_url}[/yellow]")
+        return
+
+    # Discover free ports
+    prism_port = find_free_port(GATEWAY_PORT_CANDIDATES)
+    grpc_port = find_free_port(GRPC_PORT_CANDIDATES)
+    _write_env_key("PRISM_PORT", str(prism_port))
+    _write_env_key("DATA_PLANE_PORT", str(grpc_port))
+
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     log_file = LOG_DIR / "run-all.log"
 
@@ -95,6 +126,8 @@ def start():
     env = os.environ.copy()
     prism_env = _load_env()
     env.update(prism_env)
+    env["PRISM_PORT"] = str(prism_port)
+    env["DATA_PLANE_PORT"] = str(grpc_port)
 
     proc = subprocess.Popen(
         ["bash", "-c", "make run-all"],
@@ -108,7 +141,9 @@ def start():
     pid_file = LOG_DIR / "run-all.pid"
     pid_file.write_text(str(proc.pid))
 
+    gateway_url = f"http://localhost:{prism_port}"
     console.print(f"[green]Services starting (PID {proc.pid})[/green]")
+    console.print(f"[dim]Gateway: {gateway_url} | gRPC port: {grpc_port}[/dim]")
     console.print(f"[dim]Logs: {log_file}[/dim]")
     console.print("\nRun [bold]prism status[/bold] to check readiness.")
 
@@ -131,7 +166,9 @@ def stop():
             pid_file.unlink(missing_ok=True)
 
     # Kill processes holding our known ports
-    ports = {8001: "Management Plane", 50051: "Data Plane", 3001: "MCP Server"}
+    prism_port = _prism_port()
+    grpc_port = _data_plane_port()
+    ports = {prism_port: "Prism Gateway", grpc_port: "Data Plane (gRPC)"}
     for port, name in ports.items():
         if _port_open(port):
             result = subprocess.run(
@@ -162,33 +199,28 @@ def status():
     table.add_column("Status")
     table.add_column("Endpoint")
 
-    mgmt_ok = _http_ok(f"{MGMT_URL}/health")
+    gateway_url = _prism_url()
+    grpc_port = _data_plane_port()
+
+    gateway_ok = _http_ok(gateway_url + "/health")
     table.add_row(
-        "Management Plane",
-        "8001",
-        "[green]healthy[/green]" if mgmt_ok else "[red]unreachable[/red]",
-        f"{MGMT_URL}/health",
+        "Prism Gateway",
+        str(_prism_port()),
+        "[green]healthy[/green]" if gateway_ok else "[red]unreachable[/red]",
+        f"{gateway_url}/health",
     )
 
-    data_ok = _port_open(DATA_PLANE_PORT)
+    data_ok = _port_open(grpc_port)
     table.add_row(
         "Data Plane (gRPC)",
-        "50051",
+        str(grpc_port),
         "[green]listening[/green]" if data_ok else "[red]unreachable[/red]",
-        "localhost:50051",
-    )
-
-    mcp_ok = _http_ok(f"{MCP_URL}/health")
-    table.add_row(
-        "MCP Server",
-        "3001",
-        "[green]healthy[/green]" if mcp_ok else "[red]unreachable[/red]",
-        f"{MCP_URL}/health",
+        f"localhost:{grpc_port}",
     )
 
     console.print(table)
 
-    if not any([mgmt_ok, data_ok, mcp_ok]):
+    if not any([gateway_ok, data_ok]):
         console.print("\n[yellow]No services are running. Use [bold]prism start[/bold] to start them.[/yellow]")
 
 
@@ -266,7 +298,7 @@ def tenant():
 def policies():
     """List installed policies from the Management Plane."""
     tid = _tenant_id()
-    url = f"{MGMT_URL}/api/v2/policies"
+    url = f"{_prism_url()}/api/v2/policies"
     headers = {"X-Tenant-Id": tid}
 
     console.print(f"[dim]Fetching policies from {url} (tenant: {tid})[/dim]\n")
