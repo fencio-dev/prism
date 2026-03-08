@@ -131,7 +131,7 @@ app.include_router(health.router)
 app.include_router(enforcement_v2.router, prefix=config.API_V2_PREFIX)
 app.include_router(policies_v2.router, prefix=config.API_V2_PREFIX)
 app.include_router(telemetry.router, prefix=config.API_V2_PREFIX)
-app.mount("/mcp", mcp.streamable_http_app())
+app.mount("/mcp", mcp.http_app())
 
 _ui_dist = Path(__file__).parent.parent.parent / "ui" / "dist"
 if _ui_dist.is_dir():
