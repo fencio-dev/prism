@@ -20,6 +20,12 @@ Every enforcement decision feeds a **closed-loop training pipeline**: reviewers 
 ## Quick Start
 
 ```bash
+curl -fsSL https://fencio.dev/install.sh | bash
+```
+
+Or, to set up manually:
+
+```bash
 git clone https://github.com/fencio-dev/prism.git
 cd prism
 
