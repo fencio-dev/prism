@@ -188,3 +188,8 @@ data/seed/**/*.jsonl
 .data
 
 tmp/
+
+# Runtime artifacts created in the installed clone (~/.prism)
+bin/
+data/certs/
+proxy/
