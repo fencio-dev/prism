@@ -1,9 +1,11 @@
-.PHONY: help install test test-mgmt test-sdk clean run-mgmt run-data run-all run-mcp build-rust build-data lint format no-mcp generate-proto
+.PHONY: help install install-proxy test test-mgmt test-sdk clean run-mgmt run-data run-all run-mcp build-rust build-data lint format no-mcp generate-proto run-proxy stop-proxy
 
 ROOT := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 LOG_DIR := $(ROOT)/data/logs
 MCP_HEALTH_CHECK_TIMEOUT := 30
 DATA_PLANE_HEALTH_CHECK_TIMEOUT := 30
+PROXY_HEALTH_CHECK_TIMEOUT := 30
+PRISM_PORT ?= 47000
 
 ifneq (,$(filter no-mcp,$(MAKECMDGOALS)))
 NO_MCP=1
@@ -74,7 +76,22 @@ install:
 	cd data_plane/tupl_dp/bridge && cargo build --release
 	@echo "Building data-plane..."
 	cd data_plane/tupl_dp/bridge && cargo build --release
+	@$(MAKE) install-proxy
 	@echo "✅ Setup complete!"
+
+install-proxy:
+	@echo "Installing fencio-proxy..."
+	@if [ -d "$(HOME)/.prism/proxy" ]; then \
+		echo "Updating proxy source..."; \
+		git -C $(HOME)/.prism/proxy pull --ff-only origin main; \
+	else \
+		echo "Cloning proxy source..."; \
+		git clone https://github.com/fencio-dev/proxy $(HOME)/.prism/proxy; \
+	fi
+	@echo "Building fencio-proxy binary..."
+	mkdir -p $(HOME)/.prism/bin
+	cd $(HOME)/.prism/proxy && go build -o $(HOME)/.prism/bin/fencio-proxy .
+	@echo "✅ fencio-proxy installed!"
 
 test:
 	@echo "Running all tests..."
@@ -140,14 +157,16 @@ run-all: generate-proto
 	@echo "🚀 Starting all services..."
 	@echo "   - Data Plane:       port $(or $(DATA_PLANE_PORT),50051)"
 	@echo "   - Management Plane: port $(or $(PRISM_PORT),47000)  (includes /mcp)"
+	@echo "   - Proxy:            port 47100"
 	@echo ""
 	@echo "📝 Logs will be written to:"
 	@echo "   - Data Plane:       $(LOG_DIR)/data-plane.log"
 	@echo "   - Management Plane: $(LOG_DIR)/management-plane.log"
+	@echo "   - Proxy:            $(LOG_DIR)/proxy.log"
 	@echo ""
-	@mkdir -p $(LOG_DIR)
+	@mkdir -p $(LOG_DIR) data/pids
 	@trap 'echo "🛑 Shutting down all services..."; kill 0' EXIT; \
-	echo "📍 Step 1/2: Starting data-plane on port $(or $(DATA_PLANE_PORT),50051)..."; \
+	echo "📍 Step 1/3: Starting data-plane on port $(or $(DATA_PLANE_PORT),50051)..."; \
 	(mkdir -p data && cd data_plane/tupl_dp/bridge && DATA_PLANE_PORT=$(or $(DATA_PLANE_PORT),50051) HITLOG_SQLITE_PATH=$(PWD)/data/hitlogs.db MANAGEMENT_PLANE_URL=http://localhost:$(or $(PRISM_PORT),47000)/api/v2 cargo run --bin bridge-server > $(LOG_DIR)/data-plane.log 2>&1) & \
 	DATA_PLANE_PID=$$!; \
 	echo "⏳ Waiting for data-plane on port $(or $(DATA_PLANE_PORT),50051) (timeout: $(DATA_PLANE_HEALTH_CHECK_TIMEOUT)s)..."; \
@@ -159,13 +178,54 @@ run-all: generate-proto
 		sleep 1; \
 	done; \
 	echo ""; \
-	echo "📍 Step 2/2: Starting management-plane on port $(or $(PRISM_PORT),47000)..."; \
+	echo "📍 Step 2/3: Starting management-plane on port $(or $(PRISM_PORT),47000)..."; \
 	(cd management_plane && PRISM_PORT=$(or $(PRISM_PORT),47000) DATA_PLANE_PORT=$(or $(DATA_PLANE_PORT),50051) uv run uvicorn app.main:app --host 0.0.0.0 --port $(or $(PRISM_PORT),47000) >> $(LOG_DIR)/management-plane.log 2>&1) & \
 	MGMT_PID=$$!; \
+	echo "⏳ Waiting for management-plane on port $(or $(PRISM_PORT),47000) (timeout: $(MCP_HEALTH_CHECK_TIMEOUT)s)..."; \
+	for i in $$(seq 1 $(MCP_HEALTH_CHECK_TIMEOUT)); do \
+		if nc -z localhost $(or $(PRISM_PORT),47000) 2>/dev/null; then \
+			echo "✅ Management-plane on port $(or $(PRISM_PORT),47000) is ready"; \
+			break; \
+		fi; \
+		sleep 1; \
+	done; \
+	echo ""; \
+	echo "📍 Step 3/3: Starting fencio-proxy on port 47100..."; \
+	(FENCIO_LISTEN_ADDR=:47100 FENCIO_API_ADDR=:47101 FENCIO_DB_TYPE=sqlite FENCIO_PRISM_URL=http://localhost:$(or $(PRISM_PORT),47000) FENCIO_ENFORCE_ENABLED=true ~/.prism/bin/fencio-proxy >> $(LOG_DIR)/proxy.log 2>&1) & \
+	PROXY_PID=$$!; \
+	echo $$PROXY_PID > data/pids/proxy.pid; \
+	echo "⏳ Waiting for fencio-proxy on port 47100 (timeout: $(PROXY_HEALTH_CHECK_TIMEOUT)s)..."; \
+	for i in $$(seq 1 $(PROXY_HEALTH_CHECK_TIMEOUT)); do \
+		if nc -z localhost 47100 2>/dev/null; then \
+			echo "✅ fencio-proxy on port 47100 is ready"; \
+			break; \
+		fi; \
+		sleep 1; \
+	done; \
 	echo ""; \
 	echo "✅ All services started! Press Ctrl+C to stop."; \
 	echo ""; \
 	wait
+
+run-proxy:
+	@echo "🚀 Starting fencio-proxy on port 47100..."
+	@mkdir -p $(LOG_DIR) data/pids
+	@FENCIO_LISTEN_ADDR=:47100 \
+		FENCIO_API_ADDR=:47101 \
+		FENCIO_DB_TYPE=sqlite \
+		FENCIO_PRISM_URL=http://localhost:$(PRISM_PORT) \
+		FENCIO_ENFORCE_ENABLED=true \
+		~/.prism/bin/fencio-proxy >> $(LOG_DIR)/proxy.log 2>&1 & \
+	echo $$! > data/pids/proxy.pid; \
+	echo "✅ fencio-proxy started (PID $$(cat data/pids/proxy.pid))"
+
+stop-proxy:
+	@if [ -f data/pids/proxy.pid ]; then \
+		kill $$(cat data/pids/proxy.pid) 2>/dev/null && echo "✅ fencio-proxy stopped" || echo "⚠  fencio-proxy was not running"; \
+		rm -f data/pids/proxy.pid; \
+	else \
+		echo "⚠  No proxy PID file found (data/pids/proxy.pid)"; \
+	fi
 
 build-rust:
 	@echo "Building Rust data-plane library..."

@@ -305,7 +305,7 @@ def update(
         console.print(f"[red]Prism home not found at {PRISM_HOME}. Run the installer first.[/red]")
         raise typer.Exit(1)
 
-    for tool in ["git", "make", "uv", "cargo"]:
+    for tool in ["git", "make", "uv", "cargo", "go"]:
         if shutil.which(tool) is None:
             console.print(f"[red]Missing required tool: {tool}[/red]")
             raise typer.Exit(1)
