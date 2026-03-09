@@ -10,7 +10,6 @@ services:
       - "50051:50051" # Data Plane gRPC
     environment:
       - SEMANTIC_SANDBOX_LIB_PATH=/app/libs/libsemantic_sandbox.so
-      - GOOGLE_API_KEY=${GEMINI_API_KEY}
       - SUPABASE_URL=${SUPABASE_URL}
       - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}
       - SUPABASE_JWT_SECRET=${SUPABASE_JWT_SECRET}

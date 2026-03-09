@@ -7,13 +7,11 @@ Usage:
   prism stop       Stop all services
   prism status     Show service health
   prism logs       Tail service logs
-  prism config     Update GOOGLE_API_KEY interactively
   prism tenant     Show current tenant ID
   prism policies   List installed policies
 """
 
 import os
-import sys
 import signal
 import subprocess
 import socket
@@ -24,7 +22,6 @@ import typer
 import httpx
 from rich.console import Console
 from rich.table import Table
-from rich.prompt import Prompt
 from dotenv import load_dotenv, set_key, dotenv_values
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -248,42 +245,6 @@ def logs(
 
 
 @app.command()
-def config():
-    """Interactive TUI to update GOOGLE_API_KEY."""
-    console.print("[bold]Prism Configuration[/bold]\n")
-
-    env = _load_env()
-    current_key = env.get("GOOGLE_API_KEY", "")
-    masked = f"{current_key[:8]}...{current_key[-4:]}" if len(current_key) > 12 else ("(not set)" if not current_key else "(set)")
-    console.print(f"Current GOOGLE_API_KEY: [dim]{masked}[/dim]")
-    console.print("Get a key at: https://aistudio.google.com/app/apikey\n")
-
-    while True:
-        if not sys.stdin.isatty():
-            sys.stdin = open("/dev/tty", "r")
-        new_key = Prompt.ask("Enter new GOOGLE_API_KEY (leave blank to keep current)")
-        if not new_key:
-            if not current_key:
-                console.print("[yellow]No key set. Please provide a valid API key.[/yellow]")
-                continue
-            console.print("[dim]Keeping existing key.[/dim]")
-            return
-
-        console.print("[dim]Validating key...[/dim]")
-        if _validate_google_key(new_key):
-            console.print("[green]Key is valid.[/green]")
-            _write_env_key("GOOGLE_API_KEY", new_key)
-            # Also sync to management_plane/.env
-            mgmt_env = PRISM_HOME / "management_plane" / ".env"
-            if mgmt_env.exists():
-                set_key(str(mgmt_env), "GOOGLE_API_KEY", new_key)
-            console.print("[bold green]GOOGLE_API_KEY updated.[/bold green]")
-            return
-        else:
-            console.print("[red]Key validation failed (could not reach Gemini API or key is invalid). Try again.[/red]")
-
-
-@app.command()
 def tenant():
     """Show the current tenant ID."""
     tid = _tenant_id()
@@ -335,16 +296,6 @@ def policies():
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ──────────────────────────────────────────────────────────────────────────────
-
-def _validate_google_key(key: str) -> bool:
-    """Return True if the Gemini API accepts the key."""
-    url = f"https://generativelanguage.googleapis.com/v1beta/models?key={key}"
-    try:
-        r = httpx.get(url, timeout=10)
-        return r.status_code == 200
-    except Exception:
-        return False
-
 
 def _write_env_key(key: str, value: str) -> None:
     """Write or update a key in PRISM_HOME/.env."""

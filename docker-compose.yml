@@ -79,7 +79,6 @@ services:
       start_period: 15s
     restart: unless-stopped
     environment:
-      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
       - MGMT_PLANE_PORT=${MGMT_PLANE_PORT:-8001}
       - DATA_PLANE_URL=data-plane:50051
       - CHROMA_URL=http://chromadb:8000
@@ -88,7 +87,6 @@ services:
       - CANONICALIZATION_ENABLED=${CANONICALIZATION_ENABLED:-true}
       - BERT_MODEL_PATH=${BERT_MODEL_PATH:-/app/management_plane/models/bert}
       - BERT_TOKENIZER_PATH=${BERT_TOKENIZER_PATH:-/app/management_plane/models/bert}
-      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-1.5-flash}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-all-MiniLM-L6-v2}
 
   mcp-server:
