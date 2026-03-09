@@ -283,6 +283,7 @@ def proxy():
         "[bold]Using LangChain or LangGraph?[/bold]\n\n"
         "A cleaner integration is available:\n\n"
         "  [green]pip install langchain-prism[/green]\n\n"
+        "  [cyan]https://fencio.dev/docs/integrations/langchain[/cyan]\n\n"
         "This applies enforcement at the LLM callback level\n"
         "without configuring a network proxy.",
         border_style="dim",
