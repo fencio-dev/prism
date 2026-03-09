@@ -52,7 +52,6 @@ fi
 
 # Validate required environment variables
 REQUIRED_VARS=(
-  "GEMINI_API_KEY"
   "SUPABASE_URL"
   "SUPABASE_SERVICE_KEY"
   "SUPABASE_JWT_SECRET"

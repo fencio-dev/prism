@@ -57,10 +57,6 @@ class Config:
     # Database Configuration (Week 3)
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./mgmt_plane.db")
 
-    # LLM/Api Configuration (Week 4)
-    GOOGLE_API_KEY: str | None = os.getenv("GOOGLE_API_KEY")
-    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
-
     # Data Plane Configuration
     data_plane_url: str = os.getenv("DATA_PLANE_URL", f"localhost:{os.getenv('DATA_PLANE_PORT', '50051')}")
 
@@ -84,22 +80,6 @@ class Config:
         Validate configuration at startup.
         """
         pass
-
-    @classmethod
-    def get_google_api_key(cls) -> str:
-        """
-        Fail fast when the Google API key is missing.
-
-        Raises:
-            ValueError: If GOOGLE_API_KEY is not configured.
-        """
-        if not cls.GOOGLE_API_KEY:
-            raise ValueError(
-                "GOOGLE_API_KEY not found. Please set it in management_plane/.env, "
-                "examples/langgraph_demo/.env, or the environment."
-            )
-        return cls.GOOGLE_API_KEY
-
 
 # Global config instance
 config = Config()
