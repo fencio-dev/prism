@@ -45,6 +45,18 @@ def _data_plane_port() -> int:
     return int(_load_env().get("DATA_PLANE_PORT", "50051"))
 
 
+def _proxy_port() -> int:
+    return 47100
+
+
+def _proxy_api_port() -> int:
+    return 47101
+
+
+def _proxy_api_url() -> str:
+    return f"http://localhost:{_proxy_api_port()}"
+
+
 def _prism_url() -> str:
     return f"http://localhost:{_prism_port()}"
 
@@ -57,6 +69,8 @@ def find_free_port(candidates: list[int]) -> int:
     raise RuntimeError(f"All preferred ports are busy: {candidates}")
 
 app = typer.Typer(help="Prism — local LLM security policy enforcement", add_completion=False)
+agents_app = typer.Typer(help="Manage agents registered with the Fencio Proxy.")
+app.add_typer(agents_app, name="agents")
 console = Console()
 
 
@@ -210,10 +224,69 @@ def status():
         f"localhost:{grpc_port}",
     )
 
+    proxy_port = _proxy_port()
+    proxy_ok = _port_open(proxy_port)
+    table.add_row(
+        "Fencio Proxy",
+        str(proxy_port),
+        "[green]listening[/green]" if proxy_ok else "[red]unreachable[/red]",
+        f"localhost:{proxy_port}",
+    )
+
+    proxy_api_port = _proxy_api_port()
+    proxy_api_ok = _port_open(proxy_api_port)
+    table.add_row(
+        "Proxy API",
+        str(proxy_api_port),
+        "[green]listening[/green]" if proxy_api_ok else "[red]unreachable[/red]",
+        f"http://localhost:{proxy_api_port}",
+    )
+
     console.print(table)
 
-    if not any([gateway_ok, data_ok]):
+    if not any([gateway_ok, data_ok, proxy_ok, proxy_api_ok]):
         console.print("\n[yellow]No services are running. Use [bold]prism start[/bold] to start them.[/yellow]")
+
+
+@app.command()
+def proxy():
+    """Show how to route agent traffic through the Fencio Proxy."""
+    from rich.panel import Panel
+    from rich.text import Text
+
+    proxy_port = _proxy_port()
+    proxy_api_port = _proxy_api_port()
+
+    console.print(Panel.fit(
+        f"[bold]Forward proxy:[/bold]  localhost:{proxy_port}\n"
+        f"[bold]Proxy API:[/bold]      http://localhost:{proxy_api_port}",
+        title="Fencio Proxy — Network-Level Enforcement",
+        border_style="blue",
+    ))
+
+    console.print("\n[bold]Step 1 — Route your agent's traffic through the proxy[/bold]")
+    console.print("\nSet these environment variables before running your agent:\n")
+    console.print(f"  [green]export HTTP_PROXY=http://localhost:{proxy_port}[/green]")
+    console.print(f"  [green]export HTTPS_PROXY=http://localhost:{proxy_port}[/green]")
+
+    console.print("\n[bold]Step 2 — Register your agent[/bold]")
+    console.print("\n  [green]prism agents create \"my-agent\"[/green]")
+    console.print("\n  Copy the [bold]agent_id[/bold] from the output. Set it on every request:")
+    console.print("\n  [green]X-Fencio-Agent-ID: <agent_id>[/green]")
+    console.print("\n[dim]Requests without this header are dropped with 403.[/dim]")
+
+    console.print("\n[bold]Step 3 — Watch enforcement decisions in real time[/bold]")
+    console.print(f"\n  [cyan]prism logs proxy[/cyan]   — tail proxy enforcement logs")
+    console.print(f"  [cyan]prism status[/cyan]       — check proxy health")
+
+    console.print(Panel.fit(
+        "[bold]Using LangChain or LangGraph?[/bold]\n\n"
+        "A cleaner integration is available:\n\n"
+        "  [green]pip install langchain-prism[/green]\n\n"
+        "This applies enforcement at the LLM callback level\n"
+        "without configuring a network proxy.",
+        border_style="dim",
+    ))
 
 
 @app.command()
@@ -292,6 +365,242 @@ def policies():
             table.add_row(str(item))
 
     console.print(table)
+
+
+@agents_app.callback(invoke_without_command=True)
+def agents(ctx: typer.Context):
+    """Manage agents registered with the Fencio Proxy. Run without subcommand for interactive TUI."""
+    if ctx.invoked_subcommand is None:
+        from textual.app import App, ComposeResult
+        from textual.widgets import DataTable, Header, Footer, Input, Label, Button
+        from textual.containers import Vertical, Horizontal
+        from textual.screen import ModalScreen
+        from textual import events
+
+        class NewAgentScreen(ModalScreen):
+            DEFAULT_CSS = """
+            #dialog {
+                padding: 1 2;
+                width: 60;
+                height: auto;
+                border: thick $background 80%;
+                background: $surface;
+            }
+            """
+
+            def compose(self) -> ComposeResult:
+                with Vertical(id="dialog"):
+                    yield Label("Register New Agent")
+                    yield Input(placeholder="Agent name", id="name-input")
+                    yield Input(placeholder="Description (optional)", id="desc-input")
+                    with Horizontal():
+                        yield Button("Create", variant="primary", id="create-btn")
+                        yield Button("Cancel", id="cancel-btn")
+
+            def on_button_pressed(self, event: Button.Pressed) -> None:
+                if event.button.id == "create-btn":
+                    name = self.query_one("#name-input", Input).value.strip()
+                    if not name:
+                        self.query_one("#name-input", Input).focus()
+                        return
+                    desc = self.query_one("#desc-input", Input).value.strip()
+                    try:
+                        r = httpx.post(
+                            f"{_proxy_api_url()}/api/admin/agents",
+                            json={"agent_name": name, "description": desc},
+                            timeout=5,
+                        )
+                        if r.status_code == 201:
+                            data = r.json()
+                            self.app.notify(
+                                f"API key: {data['api_key']}",
+                                timeout=15,
+                            )
+                        else:
+                            self.app.notify(f"Error {r.status_code}: {r.text}")
+                    except Exception as e:
+                        self.app.notify(f"Cannot reach Proxy API: {e}")
+                    self.dismiss(True)
+                elif event.button.id == "cancel-btn":
+                    self.dismiss(False)
+
+            def on_key(self, event: events.Key) -> None:
+                if event.key == "escape":
+                    self.dismiss(False)
+
+        class AgentsApp(App):
+            TITLE = "Fencio Proxy — Agent Manager"
+
+            DEFAULT_CSS = """
+            DataTable {
+                height: 1fr;
+            }
+            Footer {
+                background: $panel;
+            }
+            """
+
+            BINDINGS = [
+                ("n", "new_agent", "New agent"),
+                ("d", "delete_agent", "Delete"),
+                ("space", "toggle_agent", "Enable/Disable"),
+                ("q", "quit", "Quit"),
+            ]
+
+            def compose(self) -> ComposeResult:
+                yield Header()
+                yield DataTable(id="agents-table", cursor_type="row", zebra_stripes=True)
+                yield Footer()
+
+            def on_mount(self) -> None:
+                self.sub_title = f"Proxy API: {_proxy_api_url()}"
+                self.load_agents()
+
+            def load_agents(self) -> None:
+                table = self.query_one("#agents-table", DataTable)
+                table.clear(columns=True)
+                table.add_columns("Agent ID", "Name", "Status", "Description", "Created")
+                try:
+                    r = httpx.get(f"{_proxy_api_url()}/api/admin/agents", timeout=5)
+                    data = r.json()
+                    self._agents: list[dict] = data.get("agents", [])
+                except Exception:
+                    self._agents = []
+                    self.notify("Cannot reach Proxy API")
+                    return
+                for agent in self._agents:
+                    status_text = "enabled" if agent.get("enabled") else "disabled"
+                    created = agent.get("created_at", "").split("T")[0]
+                    table.add_row(
+                        agent.get("agent_id", ""),
+                        agent.get("agent_name", ""),
+                        status_text,
+                        agent.get("description", ""),
+                        created,
+                    )
+
+            def action_new_agent(self) -> None:
+                def on_dismiss(result) -> None:
+                    self.load_agents()
+
+                self.push_screen(NewAgentScreen(), on_dismiss)
+
+            def action_delete_agent(self) -> None:
+                if not self._agents:
+                    return
+                table = self.query_one("#agents-table", DataTable)
+                row_index = table.cursor_row
+                agent = self._agents[row_index]
+                agent_id = agent.get("agent_id", "")
+                try:
+                    r = httpx.delete(f"{_proxy_api_url()}/api/admin/agents/{agent_id}", timeout=5)
+                    if r.status_code < 300:
+                        self.notify("Agent deleted")
+                    else:
+                        self.notify(f"Error {r.status_code}: {r.text}")
+                except Exception as e:
+                    self.notify(str(e))
+                self.load_agents()
+
+            def action_toggle_agent(self) -> None:
+                if not self._agents:
+                    return
+                table = self.query_one("#agents-table", DataTable)
+                row_index = table.cursor_row
+                agent = self._agents[row_index]
+                agent_id = agent.get("agent_id", "")
+                enabled = agent.get("enabled", False)
+                action = "disable" if enabled else "enable"
+                try:
+                    r = httpx.post(
+                        f"{_proxy_api_url()}/api/admin/agents/{agent_id}/{action}",
+                        timeout=5,
+                    )
+                    if r.status_code < 300:
+                        self.notify(f"Agent {action}d")
+                    else:
+                        self.notify(f"Error {r.status_code}: {r.text}")
+                except Exception as e:
+                    self.notify(str(e))
+                self.load_agents()
+
+        AgentsApp().run()
+
+
+@agents_app.command("list")
+def agents_list():
+    """List all agents registered with the Fencio Proxy."""
+    url = f"{_proxy_api_url()}/api/admin/agents"
+
+    try:
+        r = httpx.get(url, timeout=10)
+    except Exception as e:
+        console.print(f"[red]Could not reach Proxy API: {e}[/red]")
+        console.print(f"[yellow]Is Prism running? Try: prism start[/yellow]")
+        raise typer.Exit(1)
+
+    if r.status_code != 200:
+        console.print(f"[red]HTTP {r.status_code}: {r.text}[/red]")
+        raise typer.Exit(1)
+
+    data = r.json()
+    items = data.get("agents", [])
+
+    if not items:
+        console.print("[yellow]No agents registered.[/yellow]")
+        return
+
+    table = Table(title="Registered Agents", show_header=True, header_style="bold")
+    table.add_column("Agent ID")
+    table.add_column("Name")
+    table.add_column("Status")
+    table.add_column("Description")
+    table.add_column("Created")
+
+    for agent in items:
+        status = "[green]enabled[/green]" if agent.get("enabled") else "[red]disabled[/red]"
+        created = agent.get("created_at", "").split("T")[0]
+        table.add_row(
+            agent.get("agent_id", ""),
+            agent.get("agent_name", ""),
+            status,
+            agent.get("description", ""),
+            created,
+        )
+
+    console.print(table)
+
+
+@agents_app.command("create")
+def agents_create(
+    name: str = typer.Argument(..., help="Agent name"),
+    description: str = typer.Option("", "--description", "-d", help="Optional description"),
+):
+    """Register a new agent with the Fencio Proxy."""
+    from rich.panel import Panel
+
+    url = f"{_proxy_api_url()}/api/admin/agents"
+    payload = {"agent_name": name, "description": description}
+
+    try:
+        r = httpx.post(url, json=payload, timeout=10)
+    except Exception as e:
+        console.print(f"[red]Could not reach Proxy API: {e}[/red]")
+        console.print(f"[yellow]Is Prism running? Try: prism start[/yellow]")
+        raise typer.Exit(1)
+
+    if r.status_code != 201:
+        console.print(f"[red]HTTP {r.status_code}: {r.text}[/red]")
+        raise typer.Exit(1)
+
+    data = r.json()
+    content = (
+        f"[bold]Agent ID:[/bold]   {data.get('agent_id', '')}\n"
+        f"[bold]Agent Name:[/bold] {data.get('agent_name', '')}\n"
+        f"[bold]API Key:[/bold]    {data.get('api_key', '')}"
+    )
+    console.print(Panel.fit(content, title="Agent Registered", border_style="green"))
+    console.print("[dim]The API key is shown once. Store it securely.[/dim]")
 
 
 @app.command()
