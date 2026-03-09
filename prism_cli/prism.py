@@ -653,8 +653,15 @@ def update(
         console.print("[red]Failed to inspect git status.[/red]")
         raise typer.Exit(1)
     if status_proc.stdout.strip():
-        console.print("[red]Working tree is not clean. Commit or stash changes and retry.[/red]")
-        raise typer.Exit(1)
+        console.print("[dim]→ Stashing local changes...[/dim]")
+        subprocess.run(
+            ["git", "-C", str(PRISM_HOME), "stash", "--include-untracked"],
+            capture_output=True,
+            text=True,
+        )
+        stashed = True
+    else:
+        stashed = False
 
     running_before = _http_ok(_prism_url() + "/health") or (LOG_DIR / "run-all.pid").exists()
 
@@ -694,6 +701,19 @@ def update(
         if install_result.stderr.strip():
             console.print(f"[dim]{install_result.stderr.strip()}[/dim]")
         raise typer.Exit(1)
+
+    if stashed:
+        console.print("[dim]→ Restoring stashed changes...[/dim]")
+        pop_result = subprocess.run(
+            ["git", "-C", str(PRISM_HOME), "stash", "pop"],
+            capture_output=True,
+            text=True,
+        )
+        if pop_result.returncode != 0:
+            console.print(
+                "[yellow]Could not restore stashed changes automatically. "
+                "Run: git -C ~/.prism stash pop[/yellow]"
+            )
 
     if restart and running_before:
         console.print("[bold blue]Restarting Prism services...[/bold blue]")
