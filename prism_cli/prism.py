@@ -15,6 +15,7 @@ import os
 import signal
 import subprocess
 import socket
+import shutil
 from pathlib import Path
 from typing import Optional
 
@@ -291,6 +292,111 @@ def policies():
             table.add_row(str(item))
 
     console.print(table)
+
+
+@app.command()
+def update(
+    branch: str = typer.Option("main", "--branch", help="Branch to update from"),
+    restart: bool = typer.Option(True, "--restart/--no-restart", help="Restart Prism after successful update"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show planned steps without making changes"),
+):
+    """Update Prism from git, reinstall, and optionally restart."""
+    if not PRISM_HOME.exists():
+        console.print(f"[red]Prism home not found at {PRISM_HOME}. Run the installer first.[/red]")
+        raise typer.Exit(1)
+
+    for tool in ["git", "make", "uv", "cargo"]:
+        if shutil.which(tool) is None:
+            console.print(f"[red]Missing required tool: {tool}[/red]")
+            raise typer.Exit(1)
+
+    git_check = subprocess.run(
+        ["git", "-C", str(PRISM_HOME), "rev-parse", "--is-inside-work-tree"],
+        capture_output=True,
+        text=True,
+    )
+    if git_check.returncode != 0 or git_check.stdout.strip() != "true":
+        console.print(f"[red]{PRISM_HOME} is not a git repository.[/red]")
+        raise typer.Exit(1)
+
+    current_branch_proc = subprocess.run(
+        ["git", "-C", str(PRISM_HOME), "symbolic-ref", "--quiet", "--short", "HEAD"],
+        capture_output=True,
+        text=True,
+    )
+    if current_branch_proc.returncode != 0:
+        console.print("[red]Detached HEAD detected. Check out your update branch and retry.[/red]")
+        raise typer.Exit(1)
+
+    current_branch = current_branch_proc.stdout.strip()
+    if current_branch != branch:
+        console.print(
+            f"[red]Current branch is '{current_branch}', expected '{branch}'. Switch branches and retry.[/red]"
+        )
+        raise typer.Exit(1)
+
+    status_proc = subprocess.run(
+        ["git", "-C", str(PRISM_HOME), "status", "--porcelain"],
+        capture_output=True,
+        text=True,
+    )
+    if status_proc.returncode != 0:
+        console.print("[red]Failed to inspect git status.[/red]")
+        raise typer.Exit(1)
+    if status_proc.stdout.strip():
+        console.print("[red]Working tree is not clean. Commit or stash changes and retry.[/red]")
+        raise typer.Exit(1)
+
+    running_before = _http_ok(_prism_url() + "/health") or (LOG_DIR / "run-all.pid").exists()
+
+    steps = [
+        ["git", "-C", str(PRISM_HOME), "fetch", "origin", branch],
+        ["git", "-C", str(PRISM_HOME), "pull", "--ff-only", "origin", branch],
+        ["make", "install"],
+    ]
+
+    if dry_run:
+        console.print("[bold blue]Dry run: planned update steps[/bold blue]")
+        for cmd in steps:
+            console.print(f"[dim]- {' '.join(cmd)}[/dim]")
+        if restart and running_before:
+            console.print("[dim]- prism stop[/dim]")
+            console.print("[dim]- prism start[/dim]")
+        elif restart:
+            console.print("[dim]- restart skipped (Prism not currently running)[/dim]")
+        else:
+            console.print("[dim]- restart disabled (--no-restart)[/dim]")
+        return
+
+    console.print(f"[bold blue]Updating Prism from '{branch}'...[/bold blue]")
+
+    for cmd in steps[:2]:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            console.print(f"[red]Update failed: {' '.join(cmd)}[/red]")
+            if result.stderr.strip():
+                console.print(f"[dim]{result.stderr.strip()}[/dim]")
+            raise typer.Exit(1)
+
+    console.print("[bold blue]Reinstalling Prism...[/bold blue]")
+    install_result = subprocess.run(steps[2], cwd=str(PRISM_HOME), capture_output=True, text=True)
+    if install_result.returncode != 0:
+        console.print("[red]Install failed: make install[/red]")
+        if install_result.stderr.strip():
+            console.print(f"[dim]{install_result.stderr.strip()}[/dim]")
+        raise typer.Exit(1)
+
+    if restart and running_before:
+        console.print("[bold blue]Restarting Prism services...[/bold blue]")
+        stop()
+        start()
+    elif restart:
+        console.print("[yellow]Prism was not running; skipping restart.[/yellow]")
+    else:
+        console.print("[yellow]Restart skipped (--no-restart).[/yellow]")
+
+    console.print("[bold green]Prism update complete.[/bold green]")
+    console.print(f"[dim]Run prism status to verify health. Logs: {LOG_DIR}[/dim]")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
