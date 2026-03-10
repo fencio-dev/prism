@@ -918,6 +918,14 @@ def cert_install():
         console.print(_MANUAL_INSTRUCTIONS)
         raise typer.Exit(1)
 
+    # Remove any existing Fencio Root CA before installing to avoid stale cert mismatches
+    if sys.platform == "darwin":
+        subprocess.run(
+            ["sudo", "security", "delete-certificate", "-c", "Fencio Root CA",
+             "/Library/Keychains/System.keychain"],
+            capture_output=True,
+        )
+
     result = subprocess.run(platform_action, shell=True, capture_output=True, text=True)
     if result.returncode == 0:
         console.print(Panel.fit(
@@ -987,7 +995,8 @@ def health():
                 ["openssl", "verify", str(CERT_PATH)],
                 capture_output=True, text=True,
             )
-        checks.append(("OS cert trust", result.returncode == 0, ""))
+        checks.append(("OS cert trust", result.returncode == 0,
+            "" if result.returncode == 0 else "cert not trusted — run: prism cert install"))
 
     # 2. Proxy port 47100
     proxy_ok = _port_open(47100)
