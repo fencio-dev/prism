@@ -1,7 +1,8 @@
 import { getAuthHeaders } from './headers';
 
-export async function fetchPolicies() {
-  const res = await fetch('/api/v2/policies', { headers: getAuthHeaders() });
+export async function fetchPolicies({ agentId } = {}) {
+  const url = agentId ? `/api/v2/policies?agent_id=${encodeURIComponent(agentId)}` : '/api/v2/policies';
+  const res = await fetch(url, { headers: getAuthHeaders() });
   if (!res.ok) throw new Error(`Failed to fetch policies: ${res.status}`);
   const data = await res.json();
   return data.policies;

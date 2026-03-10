@@ -30,6 +30,7 @@ from app.services import (
     PolicyEncoder,
 )
 from app.services import session_store
+from app.services.policies import list_policy_records
 
 logger = logging.getLogger(__name__)
 
@@ -171,6 +172,13 @@ async def enforce_v2(
             drift_score = 0.0
 
         # Step 7: Call gRPC enforce
+        # Determine which policy namespace to enforce against:
+        # prefer per-agent policies; fall back to tenant-wide policies.
+        enforce_namespace = event.tenant_id
+        if agent_id:
+            per_agent_policies = list_policy_records(event.tenant_id, agent_id=agent_id)
+            if per_agent_policies:
+                enforce_namespace = agent_id
         client = get_data_plane_client()
 
         try:
@@ -180,7 +188,7 @@ async def enforce_v2(
                 current_vector,
                 request_id,
                 drift_score,
-                agent_id,
+                enforce_namespace,
             )
         except Exception as e:
             logger.error(f"Data Plane enforcement failed: {e}", exc_info=True)

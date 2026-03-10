@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { createPolicy, updatePolicy } from '../api/policies';
 
 const INPUT_CLASS = 'h-8 w-full rounded-sm border border-[var(--prism-border-default)] bg-[var(--prism-bg-elevated)] px-3 text-sm text-[var(--prism-text-primary)] outline-none transition-colors placeholder:text-[var(--prism-text-muted)] focus:border-[var(--prism-accent)]/60 focus:ring-1 focus:ring-[var(--prism-accent)]/20';
@@ -14,7 +14,9 @@ export default function PolicyForm({ onSuccess, onCancel, policy = null }) {
   const isEdit = policy !== null;
 
   const [name, setName] = useState(isEdit ? policy.name : '');
-  const [tenantId, setTenantId] = useState(isEdit ? policy.tenant_id : '');
+  const [tenantId, setTenantId] = useState(isEdit ? policy.tenant_id : (localStorage.getItem('guardTenantId') || ''));
+  const [agentId, setAgentId] = useState(isEdit ? (policy.agent_id ?? '') : '');
+  const [agents, setAgents] = useState([]);
   const [status, setStatus] = useState(isEdit ? policy.status : 'active');
   const [policyType, setPolicyType] = useState(isEdit ? policy.policy_type : 'forbidden');
   const [priority, setPriority] = useState(isEdit ? policy.priority : 0);
@@ -49,6 +51,18 @@ export default function PolicyForm({ onSuccess, onCancel, policy = null }) {
   const [saving, setSaving] = useState(false);
   const [submitError, setSubmitError] = useState(null);
   const [fieldErrors, setFieldErrors] = useState({});
+
+  useEffect(() => {
+    fetch('http://localhost:47101/api/admin/agents')
+      .then((res) => res.json())
+      .then((data) => {
+        const list = data?.agents ?? [];
+        setAgents(list.map((a) => ({ value: a.agent_id, label: a.agent_name })));
+      })
+      .catch(() => {
+        // graceful degradation — leave agents empty
+      });
+  }, []);
 
   function setThreshold(key, value) {
     setThresholds((prev) => ({ ...prev, [key]: parseFloat(value) }));
@@ -109,6 +123,7 @@ export default function PolicyForm({ onSuccess, onCancel, policy = null }) {
           id: policy.id,
           name: name.trim(),
           tenant_id: tenantId.trim(),
+          agent_id: agentId || null,
           status,
           policy_type: policyType,
           priority,
@@ -125,6 +140,7 @@ export default function PolicyForm({ onSuccess, onCancel, policy = null }) {
           id: crypto.randomUUID(),
           name: name.trim(),
           tenant_id: tenantId.trim(),
+          agent_id: agentId || null,
           status,
           policy_type: policyType,
           priority,
@@ -186,6 +202,16 @@ export default function PolicyForm({ onSuccess, onCancel, policy = null }) {
               />
               {fieldErrors.tenantId && <span className="text-xs text-red-400">{fieldErrors.tenantId}</span>}
               <small className="text-xs leading-snug text-[var(--prism-text-secondary)]">The tenant this policy applies to. Must match the tenant_id in incoming intent events.</small>
+            </div>
+            <div className="flex flex-col gap-1">
+              <label htmlFor="policy-agent-id" className="text-sm font-medium text-[var(--prism-text-primary)]">Agent (optional)</label>
+              <select id="policy-agent-id" className={SELECT_CLASS} value={agentId} onChange={(e) => setAgentId(e.target.value)}>
+                <option value="">All agents (tenant-wide)</option>
+                {agents.map((a) => (
+                  <option key={a.value} value={a.value}>{a.label}</option>
+                ))}
+              </select>
+              <small className="text-xs leading-snug text-[var(--prism-text-secondary)]">Scope this policy to a specific agent, or leave as tenant-wide.</small>
             </div>
             <div className="flex flex-col gap-1">
               <label htmlFor="policy-status" className="text-sm font-medium text-[var(--prism-text-primary)]">Status</label>
