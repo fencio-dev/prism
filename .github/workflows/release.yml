@@ -1,0 +1,83 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }}-${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - runner: macos-latest
+            platform: darwin
+            arch: arm64
+          - runner: macos-13
+            platform: darwin
+            arch: amd64
+          - runner: ubuntu-latest
+            platform: linux
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux
+            arch: arm64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install Python dependencies
+        run: uv sync --all-packages
+
+      - name: Build prism CLI binary
+        run: uv run pyinstaller prism.spec
+
+      - name: Rename prism binary
+        run: mv dist/prism prism-${{ matrix.platform }}-${{ matrix.arch }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build bridge-server binary
+        run: cargo build --release
+        working-directory: data_plane/tupl_dp/bridge
+
+      - name: Rename bridge-server binary
+        run: mv data_plane/tupl_dp/bridge/target/release/bridge-server bridge-server-${{ matrix.platform }}-${{ matrix.arch }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prism-${{ matrix.platform }}-${{ matrix.arch }}
+          path: prism-${{ matrix.platform }}-${{ matrix.arch }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bridge-server-${{ matrix.platform }}-${{ matrix.arch }}
+          path: bridge-server-${{ matrix.platform }}-${{ matrix.arch }}
+
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create ${{ github.ref_name }} prism-* bridge-server-* \
+            --repo ${{ github.repository }} \
+            --title ${{ github.ref_name }} \
+            --generate-notes
