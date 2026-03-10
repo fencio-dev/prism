@@ -916,7 +916,7 @@ def cert_install():
     if not typer.confirm("Add to system trust store?", default=False):
         console.print("\n[yellow]Skipped.[/yellow]")
         console.print(_MANUAL_INSTRUCTIONS)
-        raise typer.Exit(0)
+        raise typer.Exit(1)
 
     result = subprocess.run(platform_action, shell=True, capture_output=True, text=True)
     if result.returncode == 0:
