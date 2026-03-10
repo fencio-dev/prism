@@ -15,9 +15,10 @@ jobs:
           - runner: macos-latest
             platform: darwin
             arch: arm64
-          - runner: macos-13
+          - runner: macos-latest
             platform: darwin
             arch: amd64
+            rust_target: x86_64-apple-darwin
           - runner: ubuntu-latest
             platform: linux
             arch: amd64
@@ -44,14 +45,34 @@ jobs:
       - name: Rename prism binary
         run: mv dist/prism prism-${{ matrix.platform }}-${{ matrix.arch }}
 
+      - name: Install protoc (macOS)
+        if: matrix.platform == 'darwin'
+        run: brew install protobuf
+
+      - name: Install protoc (Linux)
+        if: matrix.platform == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
 
       - name: Build bridge-server binary
-        run: cargo build --release
+        run: |
+          if [ -n "${{ matrix.rust_target }}" ]; then
+            cargo build --release --target ${{ matrix.rust_target }}
+          else
+            cargo build --release
+          fi
         working-directory: data_plane/tupl_dp/bridge
 
       - name: Rename bridge-server binary
-        run: mv data_plane/tupl_dp/bridge/target/release/bridge-server bridge-server-${{ matrix.platform }}-${{ matrix.arch }}
+        run: |
+          if [ -n "${{ matrix.rust_target }}" ]; then
+            mv data_plane/tupl_dp/bridge/target/${{ matrix.rust_target }}/release/bridge-server bridge-server-${{ matrix.platform }}-${{ matrix.arch }}
+          else
+            mv data_plane/tupl_dp/bridge/target/release/bridge-server bridge-server-${{ matrix.platform }}-${{ matrix.arch }}
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
