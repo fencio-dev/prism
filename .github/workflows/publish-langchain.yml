@@ -1,8 +1,9 @@
 name: Publish langchain-prism to PyPI
 
 on:
-  release:
-    types: [published]
+  push:
+    tags:
+      - 'langchain-prism/v*'
 
 jobs:
   publish:
