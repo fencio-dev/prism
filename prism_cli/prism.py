@@ -360,53 +360,165 @@ def tenant():
 def policies(
     agent: Optional[str] = typer.Option(None, "--agent", help="Filter by agent ID"),
 ):
-    """List installed policies from the Management Plane."""
-    tid = _tenant_id()
-    url = f"{_prism_url()}/api/v2/policies"
-    if agent:
-        url += f"?agent_id={agent}"
-    headers = {"X-Tenant-Id": tid}
+    """Manage policies interactively. Run without flags for TUI, or use --agent to pre-filter."""
+    import json as _json
+    from textual.app import App, ComposeResult
+    from textual.widgets import DataTable, Header, Footer, Input, Label, Static
+    from textual.containers import Vertical, Horizontal
+    from textual.screen import ModalScreen
+    from textual import events
 
-    console.print(f"[dim]Fetching policies from {url} (tenant: {tid})[/dim]\n")
+    initial_agent_filter = agent
 
-    try:
-        r = httpx.get(url, headers=headers, timeout=10)
-    except Exception as e:
-        console.print(f"[red]Could not reach Management Plane: {e}[/red]")
-        console.print(f"[yellow]Is Prism running? Try: prism start[/yellow]")
-        raise typer.Exit(1)
+    class FilterScreen(ModalScreen):
+        DEFAULT_CSS = """
+        #dialog {
+            padding: 1 2;
+            width: 60;
+            height: auto;
+            border: thick $background 80%;
+            background: $surface;
+        }
+        """
 
-    if r.status_code != 200:
-        console.print(f"[red]HTTP {r.status_code}: {r.text}[/red]")
-        raise typer.Exit(1)
+        def __init__(self, current: str) -> None:
+            super().__init__()
+            self._current = current
 
-    data = r.json()
-    items = data if isinstance(data, list) else data.get("policies", data.get("items", []))
+        def compose(self) -> ComposeResult:
+            with Vertical(id="dialog"):
+                yield Label("Filter by Agent ID (blank = all policies)")
+                yield Input(placeholder="Agent ID", id="agent-input", value=self._current)
 
-    if not items:
-        console.print("[yellow]No policies installed.[/yellow]")
-        return
+        def on_key(self, event: events.Key) -> None:
+            if event.key == "enter":
+                value = self.query_one("#agent-input", Input).value.strip()
+                self.dismiss(value)
+            elif event.key == "escape":
+                self.dismiss(self._current)
 
-    table = Table(title=f"Policies (tenant: {tid})", show_header=True, header_style="bold")
-    table.add_column("Name")
-    table.add_column("Status")
-    table.add_column("Agent ID")
-    for col in (items[0].keys() if isinstance(items[0], dict) else []):
-        if col not in ("name", "status", "agent_id"):
-            table.add_column(str(col))
+    class PoliciesApp(App):
+        TITLE = "Fencio — Policy Manager"
 
-    for item in items:
-        if not isinstance(item, dict):
-            table.add_row(str(item), "", "—")
-            continue
-        name = str(item.get("name", ""))
-        status = str(item.get("status", ""))
-        agent_id_val = item.get("agent_id") or ""
-        agent_id_display = agent_id_val if agent_id_val else "—"
-        extra = [str(v) for k, v in item.items() if k not in ("name", "status", "agent_id")]
-        table.add_row(name, status, agent_id_display, *extra)
+        DEFAULT_CSS = """
+        DataTable {
+            height: 1fr;
+        }
+        #detail-panel {
+            height: 14;
+            border: solid $panel;
+            padding: 0 1;
+            overflow-y: auto;
+        }
+        Footer {
+            background: $panel;
+        }
+        """
 
-    console.print(table)
+        BINDINGS = [
+            ("r", "refresh", "Refresh"),
+            ("f", "filter", "Filter by agent"),
+            ("q", "quit", "Quit"),
+        ]
+
+        def __init__(self, agent_filter: str) -> None:
+            super().__init__()
+            self._agent_filter = agent_filter
+            self._policies: list[dict] = []
+
+        def compose(self) -> ComposeResult:
+            yield Header()
+            yield DataTable(id="policies-table", cursor_type="row", zebra_stripes=True)
+            yield Static("", id="detail-panel")
+            yield Footer()
+
+        def on_mount(self) -> None:
+            tid = _tenant_id()
+            self.sub_title = f"tenant: {tid}"
+            self.load_policies()
+
+        def _fetch_policies(self) -> list[dict]:
+            tid = _tenant_id()
+            url = f"{_prism_url()}/api/v2/policies"
+            params = {}
+            if self._agent_filter:
+                params["agent_id"] = self._agent_filter
+            try:
+                r = httpx.get(url, headers={"X-Tenant-Id": tid}, params=params, timeout=10)
+                data = r.json()
+                return data if isinstance(data, list) else data.get("policies", data.get("items", []))
+            except Exception:
+                return []
+
+        def load_policies(self) -> None:
+            table = self.query_one("#policies-table", DataTable)
+            table.clear(columns=True)
+            table.add_columns("Name", "Status", "Agent ID", "Policy Type", "Priority", "Created")
+            self._policies = self._fetch_policies()
+            if not self._policies:
+                self.query_one("#detail-panel", Static).update(
+                    "[yellow]No policies found.[/yellow]" +
+                    (f" (agent filter: {self._agent_filter})" if self._agent_filter else "")
+                )
+            for p in self._policies:
+                created = str(p.get("created_at", "")).split("T")[0]
+                table.add_row(
+                    str(p.get("name", "")),
+                    str(p.get("status", "")),
+                    str(p.get("agent_id") or "—"),
+                    str(p.get("policy_type", "")),
+                    str(p.get("priority", "")),
+                    created,
+                )
+            filter_label = f"  [dim]agent filter: {self._agent_filter}[/dim]" if self._agent_filter else ""
+            self.sub_title = f"tenant: {_tenant_id()}{filter_label}  ({len(self._policies)} policies)"
+
+        def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+            if not self._policies:
+                return
+            row_index = event.cursor_row
+            if row_index >= len(self._policies):
+                return
+            p = self._policies[row_index]
+            detail_fields = [
+                ("Name", p.get("name", "")),
+                ("Status", p.get("status", "")),
+                ("Agent ID", p.get("agent_id") or "—"),
+                ("Policy Type", p.get("policy_type", "")),
+                ("Priority", p.get("priority", "")),
+                ("Created", str(p.get("created_at", "")).split("T")[0]),
+            ]
+            # Append any complex fields (JSON blobs) at the bottom
+            skip = {"name", "status", "agent_id", "policy_type", "priority", "created_at", "updated_at"}
+            for k, v in p.items():
+                if k not in skip:
+                    if isinstance(v, (dict, list)):
+                        detail_fields.append((k, _json.dumps(v, indent=2)))
+                    else:
+                        detail_fields.append((k, str(v) if v is not None else "—"))
+
+            lines = []
+            for label, value in detail_fields:
+                if "\n" in str(value):
+                    lines.append(f"[bold]{label}:[/bold]")
+                    for line in str(value).splitlines():
+                        lines.append(f"  {line}")
+                else:
+                    lines.append(f"[bold]{label}:[/bold]  {value}")
+            self.query_one("#detail-panel", Static).update("\n".join(lines))
+
+        def action_refresh(self) -> None:
+            self.load_policies()
+            self.notify("Policies refreshed")
+
+        def action_filter(self) -> None:
+            def on_dismiss(result: str) -> None:
+                self._agent_filter = result
+                self.load_policies()
+
+            self.push_screen(FilterScreen(self._agent_filter or ""), on_dismiss)
+
+    PoliciesApp(agent_filter=initial_agent_filter or "").run()
 
 
 @agents_app.callback(invoke_without_command=True)
