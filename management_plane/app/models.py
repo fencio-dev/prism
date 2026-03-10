@@ -96,6 +96,7 @@ class DesignBoundary(BaseModel):
     id: str
     name: str
     tenant_id: str
+    agent_id: str = ""
     status: Literal["active", "disabled"]
     policy_type: Literal["forbidden", "context_allow", "context_deny", "context_defer"]
     priority: int
@@ -134,6 +135,7 @@ class PolicyWriteRequest(BaseModel):
     id: str
     name: str
     tenant_id: str
+    agent_id: str = ""
     status: Literal["active", "disabled"]
     policy_type: Literal["forbidden", "context_allow", "context_deny", "context_defer"]
     priority: int

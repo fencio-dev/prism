@@ -30,7 +30,7 @@ class PolicyConverter:
 
         rule_instance = RuleInstance(
             rule_id=boundary.id,
-            agent_id=tenant_id,
+            agent_id=boundary.agent_id if boundary.agent_id else tenant_id,
             priority=boundary.priority,
             enabled=boundary.status == "active",
             created_at_ms=int(boundary.created_at * 1000),

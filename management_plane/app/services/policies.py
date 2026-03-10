@@ -45,6 +45,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         CREATE TABLE IF NOT EXISTS policies_v2 (
             tenant_id TEXT NOT NULL,
             policy_id TEXT NOT NULL,
+            agent_id TEXT NOT NULL DEFAULT '',
             name TEXT NOT NULL,
             status TEXT NOT NULL,
             policy_type TEXT NOT NULL,
@@ -71,6 +72,10 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE policies_v2 ADD COLUMN scoring_mode TEXT NOT NULL DEFAULT 'weighted-avg'"
         )
+    if "agent_id" not in columns:
+        conn.execute(
+            "ALTER TABLE policies_v2 ADD COLUMN agent_id TEXT NOT NULL DEFAULT ''"
+        )
 
     conn.commit()
 
@@ -84,6 +89,7 @@ def _row_to_boundary(row: sqlite3.Row) -> DesignBoundary:
         id=row["policy_id"],
         name=row["name"],
         tenant_id=row["tenant_id"],
+        agent_id=row["agent_id"] if row["agent_id"] else "",
         status=row["status"],
         policy_type=row["policy_type"],
         priority=row["priority"],
@@ -111,16 +117,26 @@ def fetch_policy_record(tenant_id: str, policy_id: str) -> Optional[DesignBounda
     return _row_to_boundary(row) if row else None
 
 
-def list_policy_records(tenant_id: str) -> list[DesignBoundary]:
+def list_policy_records(tenant_id: str, agent_id: str = "") -> list[DesignBoundary]:
     with _get_connection() as conn:
-        rows = conn.execute(
-            """
-            SELECT * FROM policies_v2
-            WHERE tenant_id = ?
-            ORDER BY updated_at DESC
-            """,
-            (tenant_id,),
-        ).fetchall()
+        if agent_id:
+            rows = conn.execute(
+                """
+                SELECT * FROM policies_v2
+                WHERE tenant_id = ? AND agent_id = ?
+                ORDER BY updated_at DESC
+                """,
+                (tenant_id, agent_id),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT * FROM policies_v2
+                WHERE tenant_id = ?
+                ORDER BY updated_at DESC
+                """,
+                (tenant_id,),
+            ).fetchall()
     return [_row_to_boundary(row) for row in rows]
 
 
@@ -141,6 +157,7 @@ def create_policy_record(boundary: DesignBoundary, tenant_id: str) -> DesignBoun
             INSERT INTO policies_v2 (
                 tenant_id,
                 policy_id,
+                agent_id,
                 name,
                 status,
                 policy_type,
@@ -154,11 +171,12 @@ def create_policy_record(boundary: DesignBoundary, tenant_id: str) -> DesignBoun
                 notes,
                 created_at,
                 updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 tenant_id,
                 boundary.id,
+                boundary.agent_id,
                 boundary.name,
                 boundary.status,
                 boundary.policy_type,

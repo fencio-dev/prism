@@ -9,7 +9,7 @@ import uuid
 from functools import lru_cache
 from typing import cast
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.auth import User, get_current_tenant
 from app.settings import config
@@ -63,6 +63,7 @@ def _boundary_from_request(
         id=request.id,
         name=request.name,
         tenant_id=tenant_id,
+        agent_id=request.agent_id,
         status=request.status,
         policy_type=request.policy_type,
         priority=request.priority,
@@ -169,9 +170,10 @@ async def create_policy(
 
 @router.get("", response_model=PolicyListResponse, status_code=status.HTTP_200_OK)
 async def list_policies(
+    agent_id: str = Query(default=""),
     current_user: User = Depends(get_current_tenant),
 ) -> PolicyListResponse:
-    policies = list_policy_records(current_user.id)
+    policies = list_policy_records(current_user.id, agent_id=agent_id)
     return PolicyListResponse(policies=policies)
 
 

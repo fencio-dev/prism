@@ -16,6 +16,9 @@ import signal
 import subprocess
 import socket
 import shutil
+import sys
+import hashlib
+import webbrowser
 from pathlib import Path
 from typing import Optional
 
@@ -70,7 +73,9 @@ def find_free_port(candidates: list[int]) -> int:
 
 app = typer.Typer(help="Prism — local LLM security policy enforcement", add_completion=False)
 agents_app = typer.Typer(help="Manage agents registered with the Fencio Proxy.")
+cert_app = typer.Typer(help="Manage the Fencio Proxy CA certificate.")
 app.add_typer(agents_app, name="agents")
+app.add_typer(cert_app, name="cert")
 console = Console()
 
 
@@ -150,8 +155,10 @@ def start():
     gateway_url = f"http://localhost:{prism_port}"
     console.print(f"[green]Services starting (PID {proc.pid})[/green]")
     console.print(f"[dim]Gateway: {gateway_url} | gRPC port: {grpc_port}[/dim]")
+    console.print(f"[dim]Proxy UI: http://localhost:47102[/dim]")
     console.print(f"[dim]Logs: {log_file}[/dim]")
     console.print("\nRun [bold]prism status[/bold] to check readiness.")
+    console.print("[dim]Next: [bold]prism status[/bold] → [bold]prism proxy[/bold] to set up network enforcement[/dim]")
 
 
 @app.command()
@@ -218,10 +225,10 @@ def status():
 
     data_ok = _port_open(grpc_port)
     table.add_row(
-        "Data Plane (gRPC)",
+        "Data Plane",
         str(grpc_port),
         "[green]listening[/green]" if data_ok else "[red]unreachable[/red]",
-        f"localhost:{grpc_port}",
+        "internal",
     )
 
     proxy_port = _proxy_port()
@@ -271,9 +278,10 @@ def proxy():
 
     console.print("\n[bold]Step 2 — Register your agent[/bold]")
     console.print("\n  [green]prism agents create \"my-agent\"[/green]")
-    console.print("\n  Copy the [bold]agent_id[/bold] from the output. Set it on every request:")
-    console.print("\n  [green]X-Fencio-Agent-ID: <agent_id>[/green]")
-    console.print("\n[dim]Requests without this header are dropped with 403.[/dim]")
+    console.print("\n  Copy the [bold]agent_id[/bold] and [bold]api_key[/bold] from the output. Both headers are required on every request:")
+    console.print("\n  [green]X-Fencio-Agent-ID: <agent_id>[/green]   — identifies the agent")
+    console.print("  [green]X-Fencio-API-Key: <api_key>[/green]    — authenticates the agent to the proxy")
+    console.print("\n[dim]Requests missing either header are dropped with 403.[/dim]")
 
     console.print("\n[bold]Step 3 — Watch enforcement decisions in real time[/bold]")
     console.print(f"\n  [cyan]prism logs proxy[/cyan]   — tail proxy enforcement logs")
@@ -291,20 +299,42 @@ def proxy():
 
 
 @app.command()
+def ui(
+    open: bool = typer.Option(False, "--open", "-o", help="Open Prism Gateway in the browser"),
+):
+    """Show Fencio service URLs and optionally open the Prism Gateway."""
+    from rich.panel import Panel
+
+    prism_url = _prism_url()
+    console.print(Panel.fit(
+        f"[bold]Prism Gateway:[/bold]  {prism_url}\n"
+        f"[bold]Proxy UI:[/bold]       http://localhost:47102",
+        title="Fencio Service URLs",
+        border_style="blue",
+    ))
+
+    if open:
+        webbrowser.open(prism_url)
+
+
+@app.command()
 def logs(
-    service: Optional[str] = typer.Argument(None, help="Service name: mgmt, data, mcp (default: all)"),
+    service: Optional[str] = typer.Argument(None, help="Service name: mgmt, management, data, data-plane, mcp, proxy (default: all)"),
     lines: int = typer.Option(50, "--lines", "-n", help="Number of lines to show"),
 ):
     """Tail service logs."""
     log_map = {
-        "mgmt": LOG_DIR / "management-plane.log",
-        "data": LOG_DIR / "data-plane.log",
-        "mcp":  LOG_DIR / "mcp-server.log",
+        "mgmt":        LOG_DIR / "management-plane.log",
+        "management":  LOG_DIR / "management-plane.log",
+        "data":        LOG_DIR / "data-plane.log",
+        "data-plane":  LOG_DIR / "data-plane.log",
+        "mcp":         LOG_DIR / "mcp-server.log",
+        "proxy":       LOG_DIR / "proxy.log",
     }
 
     if service:
         if service not in log_map:
-            console.print(f"[red]Unknown service '{service}'. Choose from: mgmt, data, mcp[/red]")
+            console.print(f"[red]Unknown service '{service}'. Choose from: mgmt, management, data, data-plane, mcp, proxy[/red]")
             raise typer.Exit(1)
         targets = {service: log_map[service]}
     else:
@@ -327,10 +357,14 @@ def tenant():
 
 
 @app.command()
-def policies():
+def policies(
+    agent: Optional[str] = typer.Option(None, "--agent", help="Filter by agent ID"),
+):
     """List installed policies from the Management Plane."""
     tid = _tenant_id()
     url = f"{_prism_url()}/api/v2/policies"
+    if agent:
+        url += f"?agent_id={agent}"
     headers = {"X-Tenant-Id": tid}
 
     console.print(f"[dim]Fetching policies from {url} (tenant: {tid})[/dim]\n")
@@ -354,16 +388,23 @@ def policies():
         return
 
     table = Table(title=f"Policies (tenant: {tid})", show_header=True, header_style="bold")
-    # Build columns from first item's keys
-    if items and isinstance(items[0], dict):
-        for col in items[0].keys():
+    table.add_column("Name")
+    table.add_column("Status")
+    table.add_column("Agent ID")
+    for col in (items[0].keys() if isinstance(items[0], dict) else []):
+        if col not in ("name", "status", "agent_id"):
             table.add_column(str(col))
-        for item in items:
-            table.add_row(*[str(v) for v in item.values()])
-    else:
-        table.add_column("Policy")
-        for item in items:
-            table.add_row(str(item))
+
+    for item in items:
+        if not isinstance(item, dict):
+            table.add_row(str(item), "", "—")
+            continue
+        name = str(item.get("name", ""))
+        status = str(item.get("status", ""))
+        agent_id_val = item.get("agent_id") or ""
+        agent_id_display = agent_id_val if agent_id_val else "—"
+        extra = [str(v) for k, v in item.items() if k not in ("name", "status", "agent_id")]
+        table.add_row(name, status, agent_id_display, *extra)
 
     console.print(table)
 
@@ -373,7 +414,7 @@ def agents(ctx: typer.Context):
     """Manage agents registered with the Fencio Proxy. Run without subcommand for interactive TUI."""
     if ctx.invoked_subcommand is None:
         from textual.app import App, ComposeResult
-        from textual.widgets import DataTable, Header, Footer, Input, Label, Button
+        from textual.widgets import DataTable, Header, Footer, Input, Label, Button, Static
         from textual.containers import Vertical, Horizontal
         from textual.screen import ModalScreen
         from textual import events
@@ -436,6 +477,12 @@ def agents(ctx: typer.Context):
             DataTable {
                 height: 1fr;
             }
+            #policies-panel {
+                height: 8;
+                border: solid $panel;
+                padding: 0 1;
+                color: $text-muted;
+            }
             Footer {
                 background: $panel;
             }
@@ -451,11 +498,44 @@ def agents(ctx: typer.Context):
             def compose(self) -> ComposeResult:
                 yield Header()
                 yield DataTable(id="agents-table", cursor_type="row", zebra_stripes=True)
+                yield Static("", id="policies-panel")
                 yield Footer()
 
             def on_mount(self) -> None:
                 self.sub_title = f"Proxy API: {_proxy_api_url()}"
                 self.load_agents()
+
+            def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+                if not self._agents:
+                    return
+                row_index = event.cursor_row
+                if row_index >= len(self._agents):
+                    return
+                agent = self._agents[row_index]
+                agent_id = agent.get("agent_id", "")
+                panel = self.query_one("#policies-panel", Static)
+                tid = _tenant_id()
+                try:
+                    r = httpx.get(
+                        f"{_prism_url()}/api/v2/policies",
+                        params={"agent_id": agent_id},
+                        headers={"X-Tenant-Id": tid},
+                        timeout=5,
+                    )
+                    data = r.json()
+                    items = data if isinstance(data, list) else data.get("policies", data.get("items", []))
+                except Exception:
+                    items = []
+                if not items:
+                    panel.update("No per-agent policies — tenant-wide policies apply.")
+                else:
+                    lines = [f"Policies for agent {agent_id}:"]
+                    for p in items:
+                        name = p.get("name", "")
+                        status = p.get("status", "")
+                        aid = p.get("agent_id") or "—"
+                        lines.append(f"  • {name}  [{status}]  agent: {aid}")
+                    panel.update("\n".join(lines))
 
             def load_agents(self) -> None:
                 table = self.query_one("#agents-table", DataTable)
@@ -595,13 +675,19 @@ def agents_create(
         raise typer.Exit(1)
 
     data = r.json()
+    tid = _tenant_id()
     content = (
         f"[bold]Agent ID:[/bold]   {data.get('agent_id', '')}\n"
         f"[bold]Agent Name:[/bold] {data.get('agent_name', '')}\n"
-        f"[bold]API Key:[/bold]    {data.get('api_key', '')}"
+        f"[bold]API Key:[/bold]    {data.get('api_key', '')}\n"
+        f"[bold]Tenant ID:[/bold]  {tid}"
     )
     console.print(Panel.fit(content, title="Agent Registered", border_style="green"))
     console.print("[dim]The API key is shown once. Store it securely.[/dim]")
+    console.print(
+        "[dim]Agent ID + API Key → set as [bold]X-Fencio-Agent-ID[/bold] / [bold]X-Fencio-API-Key[/bold] headers on requests through the proxy.[/dim]\n"
+        "[dim]Tenant ID → use this when creating policies in the Prism UI.[/dim]"
+    )
 
 
 @app.command()
@@ -727,6 +813,233 @@ def update(
 
     console.print("[bold green]Prism update complete.[/bold green]")
     console.print(f"[dim]Run prism status to verify health. Logs: {LOG_DIR}[/dim]")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# cert commands
+# ──────────────────────────────────────────────────────────────────────────────
+
+CERT_PATH = PRISM_HOME / "data" / "certs" / "fencio-root-ca.pem"
+
+_MANUAL_INSTRUCTIONS = (
+    "\n[bold]Manual installation:[/bold]\n"
+    "  [bold]macOS:[/bold]\n"
+    "    sudo security add-trusted-cert -d -r trustRoot \\\n"
+    f"      -k /Library/Keychains/System.keychain {CERT_PATH}\n\n"
+    "  [bold]Debian/Ubuntu:[/bold]\n"
+    f"    sudo cp {CERT_PATH} /usr/local/share/ca-certificates/fencio-root-ca.crt\n"
+    "    sudo update-ca-certificates\n\n"
+    "  [bold]RHEL/Fedora:[/bold]\n"
+    f"    sudo cp {CERT_PATH} /etc/pki/ca-trust/source/anchors/fencio-root-ca.pem\n"
+    "    sudo update-ca-trust"
+)
+
+
+def _cert_fingerprint(cert_path: Path) -> str:
+    """Return SHA-256 fingerprint of the PEM certificate."""
+    try:
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes
+        import binascii
+
+        pem_data = cert_path.read_bytes()
+        cert = x509.load_pem_x509_certificate(pem_data)
+        fp_bytes = cert.fingerprint(hashes.SHA256())
+        hex_pairs = [f"{b:02X}" for b in fp_bytes]
+        return ":".join(hex_pairs)
+    except ImportError:
+        pass
+
+    result = subprocess.run(
+        ["openssl", "x509", "-fingerprint", "-sha256", "-noout", "-in", str(cert_path)],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0:
+        # output: "SHA256 Fingerprint=AA:BB:..."
+        line = result.stdout.strip()
+        return line.split("=", 1)[-1] if "=" in line else line
+    return "(fingerprint unavailable)"
+
+
+@cert_app.command("install")
+def cert_install():
+    """Add the Fencio Proxy Root CA to the system trust store."""
+    from rich.panel import Panel
+
+    if not CERT_PATH.exists():
+        console.print(
+            f"[red]Certificate not found at {CERT_PATH}.[/red]\n"
+            "[yellow]Run [bold]prism start[/bold] first — the proxy generates its CA on first launch.[/yellow]"
+        )
+        raise typer.Exit(1)
+
+    fingerprint = _cert_fingerprint(CERT_PATH)
+
+    if sys.platform == "darwin":
+        platform_action = (
+            "sudo security add-trusted-cert -d -r trustRoot "
+            f"-k /Library/Keychains/System.keychain {CERT_PATH}"
+        )
+        platform_label = "macOS Keychain (system)"
+    elif Path("/etc/debian_version").exists():
+        platform_action = (
+            f"sudo cp {CERT_PATH} /usr/local/share/ca-certificates/fencio-root-ca.crt "
+            "&& sudo update-ca-certificates"
+        )
+        platform_label = "Debian/Ubuntu system trust store"
+    elif Path("/etc/redhat-release").exists():
+        platform_action = (
+            f"sudo cp {CERT_PATH} /etc/pki/ca-trust/source/anchors/fencio-root-ca.pem "
+            "&& sudo update-ca-trust"
+        )
+        platform_label = "RHEL/Fedora system trust store"
+    else:
+        platform_action = None
+        platform_label = "unknown"
+
+    console.print(Panel.fit(
+        f"[bold]Certificate:[/bold] {CERT_PATH}\n"
+        f"[bold]Fingerprint:[/bold] {fingerprint}\n"
+        f"[bold]Destination:[/bold] {platform_label}\n\n"
+        "The Fencio Proxy Root CA must be added to your system trust store\n"
+        "for HTTPS inspection to work without certificate errors.",
+        title="Fencio Proxy Root CA",
+        border_style="blue",
+    ))
+
+    if platform_action is None:
+        console.print("[yellow]Automatic installation is not supported on this platform.[/yellow]")
+        console.print(_MANUAL_INSTRUCTIONS)
+        raise typer.Exit(0)
+
+    if not typer.confirm("Add to system trust store?", default=False):
+        console.print("\n[yellow]Skipped.[/yellow]")
+        console.print(_MANUAL_INSTRUCTIONS)
+        raise typer.Exit(0)
+
+    result = subprocess.run(platform_action, shell=True, capture_output=True, text=True)
+    if result.returncode == 0:
+        console.print(Panel.fit(
+            "Certificate installed. HTTPS inspection is ready.",
+            border_style="green",
+        ))
+    else:
+        error_detail = result.stderr.strip() or result.stdout.strip() or "(no output)"
+        console.print(Panel.fit(
+            f"[red]Installation failed.[/red]\n\n{error_detail}",
+            border_style="red",
+        ))
+        console.print(_MANUAL_INSTRUCTIONS)
+        raise typer.Exit(1)
+
+
+@cert_app.command("status")
+def cert_status():
+    """Check whether the Fencio Proxy Root CA is trusted by the system."""
+    if not CERT_PATH.exists():
+        console.print(
+            f"[yellow]Certificate not found at {CERT_PATH}.[/yellow]\n"
+            "[dim]Run [bold]prism start[/bold] to generate it, then [bold]prism cert install[/bold].[/dim]"
+        )
+        raise typer.Exit(1)
+
+    if sys.platform == "darwin":
+        result = subprocess.run(
+            ["security", "verify-cert", "-c", str(CERT_PATH)],
+            capture_output=True,
+            text=True,
+        )
+    else:
+        result = subprocess.run(
+            ["openssl", "verify", "-CApath", "/etc/ssl/certs", str(CERT_PATH)],
+            capture_output=True,
+            text=True,
+        )
+
+    if result.returncode == 0:
+        console.print("[green]Certificate is trusted by the system.[/green]")
+    else:
+        console.print("[yellow]Certificate is NOT trusted by the system.[/yellow]")
+        console.print(f"[dim]Run [bold]prism cert install[/bold] to add it.[/dim]")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# health command
+# ──────────────────────────────────────────────────────────────────────────────
+
+@app.command("health", help="Run a full connectivity and configuration health check.")
+def health():
+    """Run a full connectivity and configuration health check."""
+    checks: list[tuple[str, bool, str]] = []
+
+    # 1. OS cert trust
+    if not CERT_PATH.exists():
+        checks.append(("OS cert trust", False, "cert not found — run prism cert install"))
+    else:
+        if sys.platform == "darwin":
+            result = subprocess.run(
+                ["security", "verify-cert", "-c", str(CERT_PATH)],
+                capture_output=True, text=True,
+            )
+        else:
+            result = subprocess.run(
+                ["openssl", "verify", str(CERT_PATH)],
+                capture_output=True, text=True,
+            )
+        checks.append(("OS cert trust", result.returncode == 0, ""))
+
+    # 2. Proxy port 47100
+    proxy_ok = _port_open(47100)
+    checks.append((
+        "Proxy port 47100",
+        proxy_ok,
+        "" if proxy_ok else "not listening — is the proxy running? (make run-proxy)",
+    ))
+
+    # 3. Proxy API port 47101
+    api_port_ok = _port_open(47101)
+    checks.append((
+        "Proxy API port 47101",
+        api_port_ok,
+        "" if api_port_ok else "not listening",
+    ))
+
+    # 4. Prism management plane
+    mgmt_ok = _http_ok(f"{_prism_url()}/health")
+    checks.append((
+        "Prism management plane",
+        mgmt_ok,
+        "" if mgmt_ok else "unreachable — is prism running? (prism start)",
+    ))
+
+    # 5. Agent registered
+    try:
+        r = httpx.get("http://localhost:47101/api/admin/agents", timeout=3)
+        data = r.json()
+        agent_ok = data.get("count", len(data.get("agents", []))) > 0
+        agent_detail = "" if agent_ok else "no agents registered — run prism agents create"
+    except Exception:
+        agent_ok = False
+        agent_detail = "proxy API unreachable"
+    checks.append(("Agent registered", agent_ok, agent_detail))
+
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Check")
+    table.add_column("Result")
+    table.add_column("Detail")
+
+    for name, passed, detail in checks:
+        result_cell = "[green]✓ pass[/green]" if passed else "[red]✗ fail[/red]"
+        table.add_row(name, result_cell, detail)
+
+    console.print(table)
+
+    if all(passed for _, passed, _ in checks):
+        console.print("[green]All checks passed.[/green]")
+    else:
+        console.print("[red]One or more checks failed.[/red]")
+        raise typer.Exit(code=1)
 
 
 # ──────────────────────────────────────────────────────────────────────────────

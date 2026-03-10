@@ -46,6 +46,8 @@ export default function PolicyList() {
   const [selectedPolicy, setSelectedPolicy] = useState(null);
   const [viewPolicy, setViewPolicy] = useState(null);
   const [selectedStatus, setSelectedStatus] = useState('all');
+  const [selectedAgent, setSelectedAgent] = useState('');
+  const [agents, setAgents] = useState([]);
 
   const filteredPolicies = policies.filter((policy) => {
     if (selectedStatus === 'all') {
@@ -54,21 +56,21 @@ export default function PolicyList() {
     return (policy.status || '').toLowerCase() === selectedStatus;
   });
 
-  const hasFilters = selectedStatus !== 'all';
+  const hasFilters = selectedStatus !== 'all' || selectedAgent !== '';
   const emptyTitle = hasFilters ? 'No matching policies' : 'No policies yet';
   const emptyDescription = hasFilters
-    ? 'No policies match the selected status filter.'
+    ? 'No policies match the selected filters.'
     : 'Create your first policy to begin enforcing guardrails for agent actions.';
-  const emptyActionLabel = hasFilters ? 'Clear Filter' : 'Add Policy';
+  const emptyActionLabel = hasFilters ? 'Clear Filters' : 'Add Policy';
   const emptyAction = hasFilters
-    ? () => setSelectedStatus('all')
+    ? () => { setSelectedStatus('all'); setSelectedAgent(''); }
     : () => setShowForm(true);
 
-  async function load() {
+  async function load(agentId) {
     setLoading(true);
     setError(null);
     try {
-      const data = await fetchPolicies();
+      const data = await fetchPolicies({ agentId: agentId || undefined });
       setPolicies(data);
     } catch (err) {
       setError(err.message);
@@ -78,14 +80,26 @@ export default function PolicyList() {
   }
 
   useEffect(() => {
-    load();
+    fetch('http://localhost:47101/api/admin/agents')
+      .then((res) => res.json())
+      .then((data) => {
+        const list = data?.agents ?? [];
+        setAgents(list.map((a) => ({ value: a.agent_id, label: a.agent_name })));
+      })
+      .catch(() => {
+        // graceful degradation — leave agents empty
+      });
   }, []);
+
+  useEffect(() => {
+    load(selectedAgent);
+  }, [selectedAgent]);
 
   async function handleToggle(id) {
     setTogglingIds((prev) => new Set(prev).add(id));
     try {
       await togglePolicyStatus(id);
-      await load();
+      await load(selectedAgent);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -101,7 +115,7 @@ export default function PolicyList() {
     setDeletingIds((prev) => new Set(prev).add(id));
     try {
       await deletePolicy(id);
-      await load();
+      await load(selectedAgent);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -120,6 +134,17 @@ export default function PolicyList() {
           {loading ? '' : `${filteredPolicies.length} ${filteredPolicies.length === 1 ? 'policy' : 'policies'}`}
         </span>
         <div className="flex items-center gap-2">
+          <select
+            className="h-8 rounded-sm border border-[var(--prism-border-default)] bg-[var(--prism-bg-elevated)] px-3 text-sm text-[var(--prism-text-primary)] outline-none transition-colors focus:border-[var(--prism-accent)]/60 focus:ring-1 focus:ring-[var(--prism-accent)]/30"
+            value={selectedAgent}
+            onChange={(e) => setSelectedAgent(e.target.value)}
+            aria-label="Filter policies by agent"
+          >
+            <option value="">All agents</option>
+            {agents.map((a) => (
+              <option key={a.value} value={a.value}>{a.label}</option>
+            ))}
+          </select>
           <select
             className="h-8 rounded-sm border border-[var(--prism-border-default)] bg-[var(--prism-bg-elevated)] px-3 text-sm text-[var(--prism-text-primary)] outline-none transition-colors focus:border-[var(--prism-accent)]/60 focus:ring-1 focus:ring-[var(--prism-accent)]/30"
             value={selectedStatus}
@@ -142,7 +167,7 @@ export default function PolicyList() {
       {showForm && (
         <PolicyForm
           policy={selectedPolicy}
-          onSuccess={() => { setShowForm(false); setSelectedPolicy(null); load(); }}
+          onSuccess={() => { setShowForm(false); setSelectedPolicy(null); load(selectedAgent); }}
           onCancel={() => { setShowForm(false); setSelectedPolicy(null); }}
         />
       )}
