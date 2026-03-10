@@ -363,8 +363,8 @@ def policies(
     """Manage policies interactively. Run without flags for TUI, or use --agent to pre-filter."""
     import json as _json
     from textual.app import App, ComposeResult
-    from textual.widgets import DataTable, Header, Footer, Input, Label, Static
-    from textual.containers import Vertical, Horizontal
+    from textual.widgets import DataTable, Header, Footer, Input, Label, Button, Static
+    from textual.containers import Vertical, Horizontal, ScrollableContainer
     from textual.screen import ModalScreen
     from textual import events
 
@@ -397,6 +397,96 @@ def policies(
             elif event.key == "escape":
                 self.dismiss(self._current)
 
+    class NewPolicyScreen(ModalScreen):
+        DEFAULT_CSS = """
+        #dialog {
+            padding: 1 2;
+            width: 70;
+            height: auto;
+            border: thick $background 80%;
+            background: $surface;
+        }
+        """
+
+        def compose(self) -> ComposeResult:
+            with Vertical(id="dialog"):
+                yield Label("Create New Policy")
+                yield Input(placeholder="Policy name", id="name-input")
+                yield Input(placeholder="context_allow / context_deny / forbidden", id="type-input", value="context_allow")
+                yield Input(placeholder="Agent ID (optional)", id="agent-input")
+                yield Input(placeholder="Priority (default 0)", id="priority-input", value="0")
+                yield Input(placeholder="match.op: what the agent does", id="op-input")
+                yield Input(placeholder="match.t: tool or resource", id="t-input")
+                with Horizontal():
+                    yield Button("Create", variant="primary", id="create-btn")
+                    yield Button("Cancel", id="cancel-btn")
+
+        def on_button_pressed(self, event: Button.Pressed) -> None:
+            if event.button.id == "create-btn":
+                import uuid
+                name = self.query_one("#name-input", Input).value.strip()
+                policy_type = self.query_one("#type-input", Input).value.strip()
+                agent_id = self.query_one("#agent-input", Input).value.strip()
+                priority_raw = self.query_one("#priority-input", Input).value.strip()
+                op = self.query_one("#op-input", Input).value.strip()
+                t = self.query_one("#t-input", Input).value.strip()
+
+                if not name:
+                    self.app.notify("Policy name is required")
+                    self.query_one("#name-input", Input).focus()
+                    return
+                if not policy_type:
+                    self.app.notify("Policy type is required")
+                    self.query_one("#type-input", Input).focus()
+                    return
+                if not op:
+                    self.app.notify("match.op is required")
+                    self.query_one("#op-input", Input).focus()
+                    return
+                if not t:
+                    self.app.notify("match.t is required")
+                    self.query_one("#t-input", Input).focus()
+                    return
+
+                try:
+                    priority = int(priority_raw)
+                except (ValueError, TypeError):
+                    priority = 0
+
+                payload = {
+                    "id": str(uuid.uuid4()),
+                    "name": name,
+                    "tenant_id": _tenant_id(),
+                    "agent_id": agent_id,
+                    "status": "active",
+                    "policy_type": policy_type,
+                    "priority": priority,
+                    "match": {"op": op, "t": t},
+                    "thresholds": {"action": 0.8, "resource": 0.8, "data": 0.8, "risk": 0.8},
+                    "scoring_mode": "min",
+                    "weights": None,
+                }
+                try:
+                    r = httpx.post(
+                        f"{_prism_url()}/api/v2/policies",
+                        headers={"X-Tenant-Id": _tenant_id()},
+                        json=payload,
+                        timeout=10,
+                    )
+                    if r.status_code == 201:
+                        self.app.notify(f"Policy '{name}' created")
+                        self.dismiss(True)
+                    else:
+                        self.app.notify(f"Error {r.status_code}: {r.text}")
+                except Exception as e:
+                    self.app.notify(f"Cannot reach Prism: {e}")
+            elif event.button.id == "cancel-btn":
+                self.dismiss(False)
+
+        def on_key(self, event: events.Key) -> None:
+            if event.key == "escape":
+                self.dismiss(False)
+
     class PoliciesApp(App):
         TITLE = "Fencio — Policy Manager"
 
@@ -408,7 +498,9 @@ def policies(
             height: 14;
             border: solid $panel;
             padding: 0 1;
-            overflow-y: auto;
+        }
+        #detail-content {
+            height: auto;
         }
         Footer {
             background: $panel;
@@ -416,8 +508,11 @@ def policies(
         """
 
         BINDINGS = [
+            ("n", "new_policy", "New policy"),
             ("r", "refresh", "Refresh"),
             ("f", "filter", "Filter by agent"),
+            ("space", "toggle_policy", "Enable/Disable"),
+            ("d", "delete_policy", "Delete"),
             ("q", "quit", "Quit"),
         ]
 
@@ -429,7 +524,8 @@ def policies(
         def compose(self) -> ComposeResult:
             yield Header()
             yield DataTable(id="policies-table", cursor_type="row", zebra_stripes=True)
-            yield Static("", id="detail-panel")
+            with ScrollableContainer(id="detail-panel"):
+                yield Static("", id="detail-content")
             yield Footer()
 
         def on_mount(self) -> None:
@@ -456,15 +552,22 @@ def policies(
             table.add_columns("Name", "Status", "Agent ID", "Policy Type", "Priority", "Created")
             self._policies = self._fetch_policies()
             if not self._policies:
-                self.query_one("#detail-panel", Static).update(
+                self.query_one("#detail-content", Static).update(
                     "[yellow]No policies found.[/yellow]" +
                     (f" (agent filter: {self._agent_filter})" if self._agent_filter else "")
                 )
             for p in self._policies:
                 created = str(p.get("created_at", "")).split("T")[0]
+                raw_status = str(p.get("status", ""))
+                if raw_status == "active":
+                    display_status = "[green]active[/green]"
+                elif raw_status == "disabled":
+                    display_status = "[dim]disabled[/dim]"
+                else:
+                    display_status = raw_status
                 table.add_row(
                     str(p.get("name", "")),
-                    str(p.get("status", "")),
+                    display_status,
                     str(p.get("agent_id") or "—"),
                     str(p.get("policy_type", "")),
                     str(p.get("priority", "")),
@@ -473,6 +576,46 @@ def policies(
             filter_label = f"  [dim]agent filter: {self._agent_filter}[/dim]" if self._agent_filter else ""
             self.sub_title = f"tenant: {_tenant_id()}{filter_label}  ({len(self._policies)} policies)"
 
+        def action_delete_policy(self) -> None:
+            row_index = self.query_one("#policies-table", DataTable).cursor_row
+            if not self._policies or row_index >= len(self._policies):
+                return
+            p = self._policies[row_index]
+            policy_id = p.get("id", "")
+            policy_name = p.get("name", "")
+            try:
+                r = httpx.delete(
+                    f"{_prism_url()}/api/v2/policies/{policy_id}",
+                    headers={"X-Tenant-Id": _tenant_id()},
+                    timeout=5,
+                )
+                if r.status_code < 300:
+                    self.notify(f"Policy '{policy_name}' deleted")
+                    self.load_policies()
+                else:
+                    self.notify(f"Error {r.status_code}: {r.text}")
+            except Exception as e:
+                self.notify(str(e))
+
+        def action_toggle_policy(self) -> None:
+            row_index = self.query_one("#policies-table", DataTable).cursor_row
+            if not self._policies or row_index >= len(self._policies):
+                return
+            policy_id = self._policies[row_index].get("id", "")
+            try:
+                r = httpx.patch(
+                    f"{_prism_url()}/api/v2/policies/{policy_id}/toggle",
+                    headers={"X-Tenant-Id": _tenant_id()},
+                    timeout=5,
+                )
+                if r.status_code < 300:
+                    self.notify("Policy toggled")
+                    self.load_policies()
+                else:
+                    self.notify(f"Error {r.status_code}: {r.text}")
+            except Exception as e:
+                self.notify(str(e))
+
         def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
             if not self._policies:
                 return
@@ -480,32 +623,80 @@ def policies(
             if row_index >= len(self._policies):
                 return
             p = self._policies[row_index]
-            detail_fields = [
-                ("Name", p.get("name", "")),
-                ("Status", p.get("status", "")),
-                ("Agent ID", p.get("agent_id") or "—"),
-                ("Policy Type", p.get("policy_type", "")),
-                ("Priority", p.get("priority", "")),
-                ("Created", str(p.get("created_at", "")).split("T")[0]),
-            ]
-            # Append any complex fields (JSON blobs) at the bottom
-            skip = {"name", "status", "agent_id", "policy_type", "priority", "created_at", "updated_at"}
-            for k, v in p.items():
-                if k not in skip:
-                    if isinstance(v, (dict, list)):
-                        detail_fields.append((k, _json.dumps(v, indent=2)))
-                    else:
-                        detail_fields.append((k, str(v) if v is not None else "—"))
 
             lines = []
-            for label, value in detail_fields:
-                if "\n" in str(value):
-                    lines.append(f"[bold]{label}:[/bold]")
-                    for line in str(value).splitlines():
+
+            # --- Top structured fields ---
+            raw_status = p.get("status", "")
+            if raw_status == "active":
+                status_display = "[green]active[/green]"
+            elif raw_status == "disabled":
+                status_display = "[dim]disabled[/dim]"
+            else:
+                status_display = str(raw_status)
+
+            top_fields = [
+                ("Name", str(p.get("name", ""))),
+                ("Status", status_display),
+                ("Agent ID", str(p.get("agent_id") or "—")),
+                ("Policy Type", str(p.get("policy_type", ""))),
+                ("Priority", str(p.get("priority", ""))),
+                ("id", str(p.get("id", "—"))),
+                ("tenant_id", str(p.get("tenant_id", "—"))),
+                ("Created", str(p.get("created_at", "")).split("T")[0]),
+                ("Updated", str(p.get("updated_at", "")).split("T")[0] if isinstance(p.get("updated_at"), str) else str(p.get("updated_at", "—"))),
+            ]
+            for label, value in top_fields:
+                lines.append(f"[bold]{label}:[/bold]  {value}")
+
+            # --- match block: individual sub-fields ---
+            match = p.get("match")
+            if isinstance(match, dict):
+                lines.append("[bold]match:[/bold]")
+                lines.append(f"  [bold]op:[/bold]   {match.get('op', '—')}")
+                lines.append(f"  [bold]t:[/bold]    {match.get('t', '—')}")
+                if "p" in match:
+                    lines.append(f"  [bold]p:[/bold]    {match['p']}")
+                if "ctx" in match:
+                    lines.append(f"  [bold]ctx:[/bold]  {match['ctx']}")
+            elif match is not None:
+                lines.append(f"[bold]match:[/bold]  {match}")
+
+            # --- notes ---
+            notes = p.get("notes")
+            if notes:
+                lines.append(f"[bold]notes:[/bold]  {notes}")
+
+            # --- thresholds ---
+            thresholds = p.get("thresholds")
+            if isinstance(thresholds, dict):
+                lines.append("[bold]thresholds:[/bold]")
+                for sub in ("action", "resource", "data", "risk"):
+                    if sub in thresholds:
+                        lines.append(f"  [bold]{sub}:[/bold]  {thresholds[sub]}")
+
+            # --- remaining complex fields ---
+            skip = {
+                "name", "status", "agent_id", "policy_type", "priority",
+                "id", "tenant_id", "created_at", "updated_at",
+                "match", "notes", "thresholds",
+            }
+            for k, v in p.items():
+                if k in skip:
+                    continue
+                if isinstance(v, (dict, list)):
+                    lines.append(f"[bold]{k}:[/bold]")
+                    for line in _json.dumps(v, indent=2).splitlines():
                         lines.append(f"  {line}")
                 else:
-                    lines.append(f"[bold]{label}:[/bold]  {value}")
-            self.query_one("#detail-panel", Static).update("\n".join(lines))
+                    lines.append(f"[bold]{k}:[/bold]  {str(v) if v is not None else '—'}")
+
+            self.query_one("#detail-content", Static).update("\n".join(lines))
+
+        def action_new_policy(self) -> None:
+            def on_dismiss(result) -> None:
+                self.load_policies()
+            self.push_screen(NewPolicyScreen(), on_dismiss)
 
         def action_refresh(self) -> None:
             self.load_policies()
