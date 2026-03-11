@@ -1147,7 +1147,8 @@ CERT_PATH = PRISM_HOME / "data" / "certs" / "fencio-root-ca.pem"
 
 def _is_containerized() -> bool:
     """Return True when running inside Docker or Kubernetes."""
-    return Path("/.dockerenv").exists() or "KUBERNETES_SERVICE_HOST" in os.environ
+    return os.environ.get("PRISM_DEPLOYMENT") in ("docker", "kubernetes") \
+        or "KUBERNETES_SERVICE_HOST" in os.environ
 
 
 _CONTAINER_CERT_INSTRUCTIONS = (
@@ -1343,7 +1344,9 @@ def health():
     checks: list[tuple[str, bool, str]] = []
 
     # 1. OS cert trust
-    if not CERT_PATH.exists():
+    if _is_containerized():
+        checks.append(("OS cert trust", True, "n/a — trust cert on the agent host, not inside the container"))
+    elif not CERT_PATH.exists():
         checks.append(("OS cert trust", False, "cert not found — run prism cert install"))
     else:
         if sys.platform == "darwin":

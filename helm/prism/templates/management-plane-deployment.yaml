@@ -30,6 +30,8 @@ spec:
               value: "{{ include "prism.fullname" . }}-data-plane:{{ .Values.dataPlane.port }}"
             - name: LOG_LEVEL
               value: {{ .Values.managementPlane.logLevel | quote }}
+            - name: PRISM_DEPLOYMENT
+              value: "kubernetes"
           {{- if or .Values.managementPlane.persistence.enabled .Values.modelCache.persistence.enabled }}
           volumeMounts:
             {{- if .Values.managementPlane.persistence.enabled }}

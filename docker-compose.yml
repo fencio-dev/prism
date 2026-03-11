@@ -53,6 +53,7 @@ services:
       - DATA_PLANE_URL=data-plane:50051
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - PRISM_PROXY_URL=http://prism-proxy:47101
+      - PRISM_DEPLOYMENT=docker
 
   proxy:
     image: ghcr.io/fencio-dev/proxy:latest
