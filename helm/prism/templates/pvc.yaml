@@ -1,0 +1,35 @@
+{{- if .Values.managementPlane.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "prism.fullname" . }}-mgmt-data
+  labels:
+    {{- include "prism.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.managementPlane.persistence.size }}
+  {{- if .Values.managementPlane.persistence.storageClass }}
+  storageClassName: {{ .Values.managementPlane.persistence.storageClass }}
+  {{- end }}
+{{- end }}
+---
+{{- if .Values.modelCache.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "prism.fullname" . }}-model-cache
+  labels:
+    {{- include "prism.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.modelCache.persistence.size }}
+  {{- if .Values.modelCache.persistence.storageClass }}
+  storageClassName: {{ .Values.modelCache.persistence.storageClass }}
+  {{- end }}
+{{- end }}

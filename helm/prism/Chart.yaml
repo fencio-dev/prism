@@ -1,0 +1,6 @@
+apiVersion: v2
+name: prism
+description: Prism + Proxy stack — LLM security policy enforcement
+type: application
+version: 0.1.0
+appVersion: "latest"

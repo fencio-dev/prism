@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "prism.fullname" . }}-management-plane
+  labels:
+    {{- include "prism.labels" . | nindent 4 }}
+    app.kubernetes.io/component: management-plane
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "prism.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: management-plane
+  ports:
+    - port: {{ .Values.managementPlane.port }}
+      targetPort: {{ .Values.managementPlane.port }}
+      protocol: TCP

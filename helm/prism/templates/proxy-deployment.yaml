@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "prism.fullname" . }}-proxy
+  labels:
+    {{- include "prism.labels" . | nindent 4 }}
+    app.kubernetes.io/component: proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "prism.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: proxy
+  template:
+    metadata:
+      labels:
+        {{- include "prism.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: proxy
+    spec:
+      containers:
+        - name: proxy
+          image: "{{ .Values.global.registry }}/proxy:{{ .Values.proxy.image.tag }}"
+          ports:
+            - containerPort: {{ .Values.proxy.listenPort }}
+              protocol: TCP
+            - containerPort: {{ .Values.proxy.apiPort }}
+              protocol: TCP
+          env:
+            - name: FENCIO_LISTEN_ADDR
+              value: ":{{ .Values.proxy.listenPort }}"
+            - name: FENCIO_API_ADDR
+              value: ":{{ .Values.proxy.apiPort }}"
+            - name: FENCIO_DB_TYPE
+              value: "sqlite"
+            - name: FENCIO_ENFORCE_ENABLED
+              value: {{ .Values.proxy.enforce | quote }}
+            - name: FENCIO_PRISM_URL
+              value: "http://{{ include "prism.fullname" . }}-management-plane:{{ .Values.managementPlane.port }}"
+          readinessProbe:
+            tcpSocket:
+              port: {{ .Values.proxy.listenPort }}
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: {{ .Values.proxy.listenPort }}
+            initialDelaySeconds: 15
+            periodSeconds: 10
