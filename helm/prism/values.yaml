@@ -17,6 +17,12 @@ managementPlane:
     size: 1Gi
     storageClass: ""
 
+ingress:
+  enabled: false
+  host: ""
+  ingressClassName: ""
+  annotations: {}
+
 modelCache:
   persistence:
     enabled: true
