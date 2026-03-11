@@ -46,7 +46,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 30s
+      start_period: 120s
     environment:
       - PRISM_PORT=47000
       - DATA_PLANE_URL=data-plane:50051
