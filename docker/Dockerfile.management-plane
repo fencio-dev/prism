@@ -9,9 +9,20 @@ RUN apt-get update && \
     pip install --no-cache-dir uv
 
 COPY management_plane/ /app/management_plane/
+COPY data_plane/proto/ /app/data_plane/proto/
 
 RUN cd /app/management_plane && \
     uv sync --no-dev
+
+RUN mkdir -p /app/management_plane/app/generated && \
+    cd /app/management_plane && \
+    uv run python -m grpc_tools.protoc \
+        -I /app/data_plane/proto \
+        --python_out=app/generated \
+        --grpc_python_out=app/generated \
+        /app/data_plane/proto/rule_installation.proto && \
+    sed -i 's/^import rule_installation_pb2/from . import rule_installation_pb2/' app/generated/rule_installation_pb2_grpc.py && \
+    printf '# Generated gRPC code from protobuf definitions\nfrom .rule_installation_pb2 import *\nfrom .rule_installation_pb2_grpc import *\n' > app/generated/__init__.py
 
 RUN mkdir -p /app/data/logs /app/data/chroma_data
 
