@@ -45,11 +45,13 @@ def _prism_port() -> int:
 
 
 def _data_plane_port() -> int:
+    if "DATA_PLANE_PORT" in os.environ:
+        return int(os.environ["DATA_PLANE_PORT"])
     return int(_load_env().get("DATA_PLANE_PORT", "50051"))
 
 
 def _proxy_port() -> int:
-    return 47100
+    return int(os.environ.get("PRISM_PROXY_PORT", "47100"))
 
 
 def _proxy_api_port() -> int:
@@ -92,10 +94,23 @@ def _tenant_id() -> str:
     return env.get("TENANT_ID", "local-dev-user")
 
 
+def _proxy_host() -> str:
+    """Extract host from PRISM_PROXY_URL, defaulting to localhost."""
+    import urllib.parse
+    url = os.environ.get("PRISM_PROXY_URL", "http://localhost:47101")
+    return urllib.parse.urlparse(url).hostname or "localhost"
+
+
 def _port_open(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(1)
         return s.connect_ex(("localhost", port)) == 0
+
+
+def _port_open_host(host: str, port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(1)
+        return s.connect_ex((host, port)) == 0
 
 
 def _http_ok(url: str, headers: Optional[dict] = None) -> bool:
@@ -223,7 +238,12 @@ def status():
         f"{gateway_url}/health",
     )
 
-    data_ok = _port_open(grpc_port)
+    _dp_url = os.environ.get("DATA_PLANE_URL", f"localhost:{grpc_port}")
+    _dp_url = _dp_url.removeprefix("grpc://")
+    _dp_host, _, _dp_port_s = _dp_url.rpartition(":")
+    _dp_host = _dp_host or "localhost"
+    _dp_port = int(_dp_port_s) if _dp_port_s.isdigit() else grpc_port
+    data_ok = _port_open_host(_dp_host, _dp_port)
     table.add_row(
         "Data Plane",
         str(grpc_port),
@@ -232,16 +252,16 @@ def status():
     )
 
     proxy_port = _proxy_port()
-    proxy_ok = _port_open(proxy_port)
+    proxy_ok = _port_open_host(_proxy_host(), proxy_port)
     table.add_row(
         "Fencio Proxy",
         str(proxy_port),
         "[green]listening[/green]" if proxy_ok else "[red]unreachable[/red]",
-        f"localhost:{proxy_port}",
+        f"{_proxy_host()}:{proxy_port}",
     )
 
     proxy_api_port = _proxy_api_port()
-    proxy_api_ok = _port_open(proxy_api_port)
+    proxy_api_ok = _port_open_host(_proxy_host(), proxy_api_port)
     table.add_row(
         "Proxy API",
         str(proxy_api_port),
@@ -1124,6 +1144,28 @@ def update(
 
 CERT_PATH = PRISM_HOME / "data" / "certs" / "fencio-root-ca.pem"
 
+
+def _is_containerized() -> bool:
+    """Return True when running inside Docker or Kubernetes."""
+    return Path("/.dockerenv").exists() or "KUBERNETES_SERVICE_HOST" in os.environ
+
+
+_CONTAINER_CERT_INSTRUCTIONS = (
+    "\n[bold]To extract and trust the Fencio Proxy Root CA:[/bold]\n\n"
+    "  [bold]Docker Compose:[/bold]\n"
+    "    docker cp prism-proxy:/app/data/certs/fencio-root-ca.pem ~/fencio-root-ca.pem\n\n"
+    "  [bold]Kubernetes:[/bold]\n"
+    "    kubectl cp <namespace>/$(kubectl get pod -l app=prism-proxy -o jsonpath='{.items[0].metadata.name}'):/app/data/certs/fencio-root-ca.pem ~/fencio-root-ca.pem\n\n"
+    "  Then on [bold]macOS:[/bold]\n"
+    "    sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain ~/fencio-root-ca.pem\n\n"
+    "  On [bold]Debian/Ubuntu:[/bold]\n"
+    "    sudo cp ~/fencio-root-ca.pem /usr/local/share/ca-certificates/fencio-root-ca.crt\n"
+    "    sudo update-ca-certificates\n\n"
+    "  On [bold]RHEL/Fedora:[/bold]\n"
+    "    sudo cp ~/fencio-root-ca.pem /etc/pki/ca-trust/source/anchors/fencio-root-ca.pem\n"
+    "    sudo update-ca-trust"
+)
+
 _MANUAL_INSTRUCTIONS = (
     "\n[bold]Manual installation:[/bold]\n"
     "  [bold]macOS:[/bold]\n"
@@ -1169,6 +1211,14 @@ def _cert_fingerprint(cert_path: Path) -> str:
 def cert_install():
     """Add the Fencio Proxy Root CA to the system trust store."""
     from rich.panel import Panel
+
+    if _is_containerized():
+        console.print(
+            "[yellow]prism cert install is not available in containerized deployments.[/yellow]\n"
+            "[dim]The cert lives inside the proxy container, not on this filesystem.[/dim]"
+            + _CONTAINER_CERT_INSTRUCTIONS
+        )
+        raise typer.Exit(1)
 
     if not CERT_PATH.exists():
         console.print(
@@ -1248,6 +1298,14 @@ def cert_install():
 @cert_app.command("status")
 def cert_status():
     """Check whether the Fencio Proxy Root CA is trusted by the system."""
+    if _is_containerized():
+        console.print(
+            "[yellow]prism cert status is not available in containerized deployments.[/yellow]\n"
+            "[dim]The cert lives inside the proxy container, not on this filesystem.[/dim]"
+            + _CONTAINER_CERT_INSTRUCTIONS
+        )
+        raise typer.Exit(1)
+
     if not CERT_PATH.exists():
         console.print(
             f"[yellow]Certificate not found at {CERT_PATH}.[/yellow]\n"
@@ -1302,7 +1360,7 @@ def health():
             "" if result.returncode == 0 else "cert not trusted — run: prism cert install"))
 
     # 2. Proxy port 47100
-    proxy_ok = _port_open(47100)
+    proxy_ok = _port_open_host(_proxy_host(), _proxy_port())
     checks.append((
         "Proxy port 47100",
         proxy_ok,
@@ -1310,7 +1368,7 @@ def health():
     ))
 
     # 3. Proxy API port 47101
-    api_port_ok = _port_open(47101)
+    api_port_ok = _port_open_host(_proxy_host(), _proxy_api_port())
     checks.append((
         "Proxy API port 47101",
         api_port_ok,
@@ -1327,7 +1385,7 @@ def health():
 
     # 5. Agent registered
     try:
-        r = httpx.get("http://localhost:47101/api/admin/agents", timeout=3)
+        r = httpx.get(f"{_proxy_api_url()}/api/admin/agents", timeout=3)
         data = r.json()
         agent_ok = data.get("count", len(data.get("agents", []))) > 0
         agent_detail = "" if agent_ok else "no agents registered — run prism agents create"

@@ -33,3 +33,21 @@ spec:
   storageClassName: {{ .Values.modelCache.persistence.storageClass }}
   {{- end }}
 {{- end }}
+---
+{{- if .Values.proxy.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "prism.fullname" . }}-proxy-data
+  labels:
+    {{- include "prism.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.proxy.persistence.size }}
+  {{- if .Values.proxy.persistence.storageClass }}
+  storageClassName: {{ .Values.proxy.persistence.storageClass }}
+  {{- end }}
+{{- end }}

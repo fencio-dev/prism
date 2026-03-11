@@ -5,6 +5,7 @@ networks:
 volumes:
   mgmt-data:
   model-cache:
+  proxy-data:
 
 services:
   data-plane:
@@ -59,6 +60,8 @@ services:
     ports:
       - "${PROXY_PORT:-47100}:47100"
       - "${PROXY_API_PORT:-47101}:47101"
+    volumes:
+      - proxy-data:/app/data
     networks:
       - prism-network
     depends_on:

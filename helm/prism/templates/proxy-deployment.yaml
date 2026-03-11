@@ -46,3 +46,14 @@ spec:
               port: {{ .Values.proxy.listenPort }}
             initialDelaySeconds: 15
             periodSeconds: 10
+          {{- if .Values.proxy.persistence.enabled }}
+          volumeMounts:
+            - name: proxy-data
+              mountPath: /app/data
+          {{- end }}
+      {{- if .Values.proxy.persistence.enabled }}
+      volumes:
+        - name: proxy-data
+          persistentVolumeClaim:
+            claimName: {{ include "prism.fullname" . }}-proxy-data
+      {{- end }}
