@@ -1,0 +1,28 @@
+FROM debian:bookworm-slim
+
+WORKDIR /app
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+ARG TARGETARCH
+RUN case "$TARGETARCH" in \
+      amd64) BINARY="fencio-proxy-linux-amd64" ;; \
+      arm64) BINARY="fencio-proxy-linux-arm64" ;; \
+      *) echo "Unsupported arch: $TARGETARCH" && exit 1 ;; \
+    esac && \
+    curl -fsSL "https://github.com/fencio-dev/proxy-releases/releases/latest/download/${BINARY}" \
+      -o /app/fencio-proxy && \
+    chmod +x /app/fencio-proxy
+
+EXPOSE 47100 47101
+
+ENV FENCIO_LISTEN_ADDR=:47100 \
+    FENCIO_API_ADDR=:47101 \
+    FENCIO_DB_TYPE=sqlite \
+    FENCIO_ENFORCE_ENABLED=true
+
+CMD ["/app/fencio-proxy"]

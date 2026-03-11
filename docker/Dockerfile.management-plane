@@ -1,0 +1,27 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    git curl \
+    && rm -rf /var/lib/apt/lists/* && \
+    pip install --no-cache-dir uv
+
+COPY management_plane/ /app/management_plane/
+
+RUN cd /app/management_plane && \
+    uv sync --no-dev
+
+RUN mkdir -p /app/data/logs /app/data/chroma_data
+
+VOLUME ["/app/data"]
+
+EXPOSE 47000
+
+ENV PRISM_PORT=47000 \
+    DATA_PLANE_URL=data-plane:50051
+
+WORKDIR /app/management_plane
+
+CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "47000"]
