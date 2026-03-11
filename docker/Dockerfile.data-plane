@@ -1,0 +1,35 @@
+FROM debian:bookworm-slim
+
+WORKDIR /app
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    libssl3 \
+    && rm -rf /var/lib/apt/lists/*
+
+ARG TARGETARCH
+RUN case "$TARGETARCH" in \
+      amd64) BINARY="bridge-server-linux-amd64" ;; \
+      arm64) BINARY="bridge-server-linux-arm64" ;; \
+      *) echo "Unsupported arch: $TARGETARCH" && exit 1 ;; \
+    esac && \
+    curl -fsSL "https://github.com/fencio-dev/prism/releases/latest/download/${BINARY}" \
+      -o /app/bridge-server && \
+    chmod +x /app/bridge-server
+
+RUN mkdir -p /app/data /var/hitlogs
+
+VOLUME ["/app/data"]
+
+EXPOSE 50051
+
+ENV DATA_PLANE_PORT=50051 \
+    HITLOG_SQLITE_PATH=/app/data/hitlogs.db \
+    MANAGEMENT_PLANE_URL=http://management-plane:47000/api/v2
+
+HEALTHCHECK --interval=10s --timeout=5s --retries=5 --start-period=15s \
+    CMD curl -sf http://localhost:50051 || exit 1
+
+CMD ["/app/bridge-server"]

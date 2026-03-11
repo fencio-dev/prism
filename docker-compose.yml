@@ -1,116 +1,78 @@
-version: '3.9'
-
 networks:
-  guard-network:
+  prism-network:
     driver: bridge
 
 volumes:
-  hitlogs:
-    driver: local
-  chromadb-data:
-    driver: local
-  logs:
-    driver: local
+  mgmt-data:
   model-cache:
-    driver: local
 
 services:
-  chromadb:
-    image: chromadb/chroma:latest
-    container_name: guard-chromadb
-    ports:
-      - "0.0.0.0:${CHROMA_PORT:-8000}:8000"
-    volumes:
-      - chromadb-data:/chroma/data
-    networks:
-      - guard-network
-    restart: unless-stopped
-    environment:
-      - IS_PERSISTENT=TRUE
-
   data-plane:
-    build:
-      context: .
-      dockerfile: Dockerfile.data-plane
-    container_name: guard-data-plane
+    image: ghcr.io/fencio-dev/data-plane:latest
+    container_name: prism-data-plane
     ports:
-      - "0.0.0.0:${DATA_PLANE_PORT:-50051}:50051"
+      - "${DATA_PLANE_PORT:-50051}:50051"
     volumes:
-      - hitlogs:/var/hitlogs
-      - logs:/app/data/logs
+      - mgmt-data:/app/data
     networks:
-      - guard-network
-    depends_on:
-      chromadb:
-        condition: service_started
+      - prism-network
+    restart: unless-stopped
     healthcheck:
-      test: ["CMD", "nc", "-z", "data-plane", "50051"]
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/50051' 2>/dev/null || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 15s
-    restart: unless-stopped
     environment:
       - RUST_LOG=${RUST_LOG:-info}
-      - MANAGEMENT_PLANE_URL=http://management-plane:8001/api/v2
-      - CHROMA_URL=http://chromadb:8000
+      - MANAGEMENT_PLANE_URL=http://management-plane:47000/api/v2
 
   management-plane:
-    build:
-      context: .
-      dockerfile: Dockerfile.management-plane
-    container_name: guard-management-plane
+    image: ghcr.io/fencio-dev/management-plane:latest
+    container_name: prism-management-plane
     ports:
-      - "0.0.0.0:${MGMT_PLANE_PORT:-8001}:8001"
+      - "${PRISM_PORT:-47000}:47000"
     volumes:
-      - logs:/app/data/logs
+      - mgmt-data:/app/data
       - model-cache:/root/.cache/huggingface
-      - ./management_plane/models:/app/management_plane/models:ro
     networks:
-      - guard-network
+      - prism-network
     depends_on:
       data-plane:
         condition: service_healthy
+    restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://management-plane:8001/health"]
+      test: ["CMD", "curl", "-sf", "http://localhost:47000/health"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 15s
-    restart: unless-stopped
+      start_period: 30s
     environment:
-      - MGMT_PLANE_PORT=${MGMT_PLANE_PORT:-8001}
+      - PRISM_PORT=47000
       - DATA_PLANE_URL=data-plane:50051
-      - CHROMA_URL=http://chromadb:8000
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - DATABASE_URL=${DATABASE_URL:-sqlite:///./guard.db}
-      - CANONICALIZATION_ENABLED=${CANONICALIZATION_ENABLED:-true}
-      - BERT_MODEL_PATH=${BERT_MODEL_PATH:-/app/management_plane/models/bert}
-      - BERT_TOKENIZER_PATH=${BERT_TOKENIZER_PATH:-/app/management_plane/models/bert}
-      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-all-MiniLM-L6-v2}
 
-  mcp-server:
-    build:
-      context: .
-      dockerfile: Dockerfile.mcp-server
-    container_name: guard-mcp-server
+  proxy:
+    image: ghcr.io/fencio-dev/proxy:latest
+    container_name: prism-proxy
     ports:
-      - "0.0.0.0:${MCP_SERVER_PORT:-3001}:3001"
-    volumes:
-      - logs:/app/data/logs
+      - "${PROXY_PORT:-47100}:47100"
+      - "${PROXY_API_PORT:-47101}:47101"
     networks:
-      - guard-network
+      - prism-network
     depends_on:
       management-plane:
         condition: service_healthy
+    restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://mcp-server:3001/health"]
+      test: ["CMD", "curl", "-sf", "http://localhost:47101/health"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 15s
-    restart: unless-stopped
     environment:
-      - MANAGEMENT_PLANE_URL=http://management-plane:8001
-      - MCP_SERVER_PORT=${MCP_SERVER_PORT:-3001}
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - FENCIO_LISTEN_ADDR=:47100
+      - FENCIO_API_ADDR=:47101
+      - FENCIO_DB_TYPE=sqlite
+      - FENCIO_ENFORCE_ENABLED=true
+      - FENCIO_PRISM_URL=http://management-plane:47000
