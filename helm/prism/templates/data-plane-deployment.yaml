@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "prism.fullname" . }}-data-plane
+  labels:
+    {{- include "prism.labels" . | nindent 4 }}
+    app.kubernetes.io/component: data-plane
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "prism.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: data-plane
+  template:
+    metadata:
+      labels:
+        {{- include "prism.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: data-plane
+    spec:
+      containers:
+        - name: data-plane
+          image: "{{ .Values.global.registry }}/data-plane:{{ .Values.dataPlane.image.tag }}"
+          ports:
+            - containerPort: {{ .Values.dataPlane.port }}
+              protocol: TCP
+          env:
+            - name: RUST_LOG
+              value: {{ .Values.dataPlane.logLevel | quote }}
+            - name: MANAGEMENT_PLANE_URL
+              value: "http://{{ include "prism.fullname" . }}-management-plane:{{ .Values.managementPlane.port }}/api/v2"
+          {{- if .Values.managementPlane.persistence.enabled }}
+          volumeMounts:
+            - name: mgmt-data
+              mountPath: /app/data
+          {{- end }}
+          readinessProbe:
+            tcpSocket:
+              port: {{ .Values.dataPlane.port }}
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: {{ .Values.dataPlane.port }}
+            initialDelaySeconds: 15
+            periodSeconds: 10
+      {{- if .Values.managementPlane.persistence.enabled }}
+      volumes:
+        - name: mgmt-data
+          persistentVolumeClaim:
+            claimName: {{ include "prism.fullname" . }}-mgmt-data
+      {{- end }}

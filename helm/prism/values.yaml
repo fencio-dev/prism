@@ -1,0 +1,33 @@
+global:
+  registry: ghcr.io/fencio-dev
+
+dataPlane:
+  image:
+    tag: latest
+  port: 50051
+  logLevel: info
+
+managementPlane:
+  image:
+    tag: latest
+  port: 47000
+  logLevel: INFO
+  persistence:
+    enabled: true
+    size: 1Gi
+    storageClass: ""
+
+modelCache:
+  persistence:
+    enabled: true
+    size: 500Mi
+    storageClass: ""
+
+proxy:
+  image:
+    tag: latest
+  listenPort: 47100
+  apiPort: 47101
+  enforce: true
+  service:
+    type: ClusterIP
