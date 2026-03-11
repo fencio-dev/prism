@@ -51,6 +51,7 @@ services:
       - PRISM_PORT=47000
       - DATA_PLANE_URL=data-plane:50051
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - PRISM_PROXY_URL=http://prism-proxy:47101
 
   proxy:
     image: ghcr.io/fencio-dev/proxy:latest

@@ -57,7 +57,7 @@ def _proxy_api_port() -> int:
 
 
 def _proxy_api_url() -> str:
-    return f"http://localhost:{_proxy_api_port()}"
+    return os.environ.get("PRISM_PROXY_URL", f"http://localhost:{_proxy_api_port()}")
 
 
 def _prism_url() -> str:
