@@ -43,7 +43,8 @@ ENV PRISM_PORT=47000 \
 COPY --from=ui-builder /app/ui/dist /app/ui/dist
 
 ARG TARGETARCH
-RUN curl -fsSL "https://github.com/fencio-dev/prism/releases/latest/download/prism-linux-${TARGETARCH}" \
+ARG PRISM_VERSION
+RUN curl -fsSL "https://github.com/fencio-dev/prism/releases/download/${PRISM_VERSION}/prism-linux-${TARGETARCH}" \
     -o /usr/local/bin/prism && \
     chmod +x /usr/local/bin/prism
 
