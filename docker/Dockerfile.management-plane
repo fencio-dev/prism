@@ -1,3 +1,10 @@
+FROM node:20-slim AS ui-builder
+WORKDIR /app/ui
+COPY ui/package*.json ./
+RUN npm ci
+COPY ui/ ./
+RUN npm run build
+
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -32,6 +39,13 @@ EXPOSE 47000
 
 ENV PRISM_PORT=47000 \
     DATA_PLANE_URL=data-plane:50051
+
+COPY --from=ui-builder /app/ui/dist /app/ui/dist
+
+ARG TARGETARCH
+RUN curl -fsSL "https://github.com/fencio-dev/prism/releases/latest/download/prism-linux-${TARGETARCH}" \
+    -o /usr/local/bin/prism && \
+    chmod +x /usr/local/bin/prism
 
 WORKDIR /app/management_plane
 
