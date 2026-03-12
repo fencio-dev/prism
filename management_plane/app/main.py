@@ -50,6 +50,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         config.validate()
         logger.info("Configuration validated successfully")
 
+        # Set up file logging for Docker/persistent deployments
+        import os
+        import logging as _logging
+        _log_dir = Path(os.environ.get("PRISM_HOME", Path.home() / ".prism")) / "data" / "logs"
+        _log_dir.mkdir(parents=True, exist_ok=True)
+        _fmt = _logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+        _mgmt_handler = _logging.FileHandler(_log_dir / "management-plane.log")
+        _mgmt_handler.setFormatter(_fmt)
+        _logging.getLogger().addHandler(_mgmt_handler)
+        _mcp_handler = _logging.FileHandler(_log_dir / "mcp-server.log")
+        _mcp_handler.setFormatter(_fmt)
+        _logging.getLogger("mcp_server").addHandler(_mcp_handler)
+        logger.info("File logging initialized at %s", _log_dir)
+
         # Initialize encoder services
         try:
             from .endpoints.enforcement_v2 import (
@@ -70,6 +84,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 logger.info("Policy encoder initialized")
             else:
                 logger.warning("Policy encoder not available")
+
+            # Pre-load embedding model into memory so first policy save is not slow
+            from .services.semantic_encoder import SemanticEncoder
+            SemanticEncoder.get_encoder_model()
+            logger.info("Embedding model pre-loaded")
 
         except Exception as e:
             logger.warning(f"Encoder services initialization warning: {e}")

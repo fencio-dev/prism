@@ -12,10 +12,12 @@ services:
   data-plane:
     image: ghcr.io/fencio-dev/data-plane:latest
     container_name: prism-data-plane
+    command: sh -c "mkdir -p /app/data/logs && exec /app/bridge-server 2>&1 | tee -a /app/data/logs/data-plane.log"
     ports:
       - "${DATA_PLANE_PORT:-50051}:50051"
     volumes:
       - mgmt-data:/app/data
+      - proxy-logs:/app/data/logs
     networks:
       - prism-network
     restart: unless-stopped
@@ -37,7 +39,7 @@ services:
     volumes:
       - mgmt-data:/app/data
       - model-cache:/root/.cache/huggingface
-      - proxy-logs:/root/.prism/data/logs
+      - proxy-logs:/app/data/logs
     networks:
       - prism-network
     depends_on:
@@ -56,6 +58,7 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - PRISM_PROXY_URL=http://prism-proxy:47101
       - PRISM_DEPLOYMENT=docker
+      - PRISM_HOME=/app
 
   proxy:
     image: ghcr.io/fencio-dev/proxy:latest

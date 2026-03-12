@@ -1,0 +1,13 @@
+# Exclude large/unnecessary directories from build context
+.venv
+.git
+.data
+data
+data_plane/tupl_dp
+management_plane/.venv
+management_plane/tests
+ui/node_modules
+.pytest_cache
+.DS_Store
+*.pyc
+__pycache__
