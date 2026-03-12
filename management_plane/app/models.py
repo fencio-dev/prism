@@ -96,7 +96,7 @@ class DesignBoundary(BaseModel):
     id: str
     name: str
     tenant_id: str
-    agent_id: str = ""
+    agent_id: Optional[str] = ""
     status: Literal["active", "disabled"]
     policy_type: Literal["forbidden", "context_allow", "context_deny", "context_defer"]
     priority: int
@@ -109,6 +109,11 @@ class DesignBoundary(BaseModel):
     notes: Optional[str] = None
     created_at: float
     updated_at: float
+
+    @field_validator("agent_id", mode="before")
+    @classmethod
+    def coerce_agent_id(cls, v):
+        return v if v is not None else ""
 
     @field_validator("drift_threshold")
     @classmethod
@@ -135,7 +140,7 @@ class PolicyWriteRequest(BaseModel):
     id: str
     name: str
     tenant_id: str
-    agent_id: str = ""
+    agent_id: Optional[str] = ""
     status: Literal["active", "disabled"]
     policy_type: Literal["forbidden", "context_allow", "context_deny", "context_defer"]
     priority: int
@@ -146,6 +151,11 @@ class PolicyWriteRequest(BaseModel):
     drift_threshold: Optional[float] = None
     modification_spec: Optional[dict] = None
     notes: Optional[str] = None
+
+    @field_validator("agent_id", mode="before")
+    @classmethod
+    def coerce_agent_id(cls, v):
+        return v if v is not None else ""
 
     @field_validator("drift_threshold")
     @classmethod
