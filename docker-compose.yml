@@ -6,6 +6,7 @@ volumes:
   mgmt-data:
   model-cache:
   proxy-data:
+  proxy-logs:
 
 services:
   data-plane:
@@ -36,6 +37,7 @@ services:
     volumes:
       - mgmt-data:/app/data
       - model-cache:/root/.cache/huggingface
+      - proxy-logs:/root/.prism/data/logs
     networks:
       - prism-network
     depends_on:
@@ -63,6 +65,7 @@ services:
       - "${PROXY_API_PORT:-47101}:47101"
     volumes:
       - proxy-data:/app/data
+      - proxy-logs:/app/data/logs
     networks:
       - prism-network
     depends_on:
@@ -81,3 +84,4 @@ services:
       - FENCIO_DB_TYPE=sqlite
       - FENCIO_ENFORCE_ENABLED=true
       - FENCIO_PRISM_URL=http://management-plane:47000
+      - FENCIO_LOG_FILE=proxy.log

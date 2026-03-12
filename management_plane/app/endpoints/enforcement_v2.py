@@ -78,8 +78,7 @@ def get_policy_encoder() -> Optional[PolicyEncoder]:
 def get_data_plane_client():
     """Get singleton Data Plane gRPC client."""
     url = os.getenv("DATA_PLANE_URL", "localhost:50051")
-    insecure = "localhost" in url or "127.0.0.1" in url
-    return DataPlaneClient(url=url, insecure=insecure)
+    return DataPlaneClient(url=url, insecure=True)
 
 
 # ============================================================================

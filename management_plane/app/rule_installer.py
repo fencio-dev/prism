@@ -61,8 +61,7 @@ def sync_active_policies_to_dataplane() -> None:
         return
 
     dp_url = config.data_plane_url
-    insecure = "localhost" in dp_url or "127.0.0.1" in dp_url
-    client = DataPlaneClient(url=dp_url, insecure=insecure)
+    client = DataPlaneClient(url=dp_url, insecure=True)
 
     synced = 0
     errors = 0
