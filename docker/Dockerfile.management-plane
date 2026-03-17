@@ -15,11 +15,12 @@ RUN apt-get update && \
     && rm -rf /var/lib/apt/lists/* && \
     pip install --no-cache-dir uv
 
+COPY pyproject.toml /app/pyproject.toml
+COPY uv.lock /app/uv.lock
 COPY management_plane/ /app/management_plane/
 COPY data_plane/proto/ /app/data_plane/proto/
 
-RUN cd /app/management_plane && \
-    uv sync --no-dev
+RUN uv sync --no-dev --package tupl-management_plane
 
 RUN mkdir -p /app/management_plane/app/generated && \
     cd /app/management_plane && \
