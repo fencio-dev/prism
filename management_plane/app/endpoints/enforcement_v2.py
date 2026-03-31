@@ -130,6 +130,72 @@ async def enforce_v2(
     logger.info(f"V2 enforce request: {request_id}, op={event.op}, t={event.t}, agent_id={agent_id}")
 
     try:
+        # ====================================================================
+        # STAGE 0: NETWORK POLICY ENFORCEMENT (if enabled)
+        # ====================================================================
+        if event.enforce_network and event.network_context:
+            logger.info(f"Network policy enforcement enabled for agent {agent_id}")
+
+            try:
+                from app.services.network_policy_evaluator import evaluate_network_policies
+
+                network_result = evaluate_network_policies(
+                    tenant_id=event.tenant_id,
+                    agent_id=agent_id,
+                    network_ctx=event.network_context
+                )
+
+                logger.info(
+                    f"Network policy result: {network_result.decision} - "
+                    f"{network_result.reason}"
+                )
+
+                # If network policy denies and mode is Enforce, block immediately
+                if network_result.decision == "DENY":
+                    logger.warning(
+                        f"Network policy DENIED: "
+                        f"{event.network_context.method} {event.network_context.url}"
+                    )
+
+                    # Build evidence for network policy denial
+                    network_evidence = BoundaryEvidence(
+                        boundary_id=network_result.policy_id or "network-policy",
+                        boundary_name=network_result.policy_name or "Network Policy",
+                        effect="deny",
+                        decision=0,
+                        similarities=[0.0, 0.0, 0.0, 0.0],
+                        triggering_slice="network",
+                        anchor_matched=f"{event.network_context.method} {event.network_context.url}",
+                        thresholds=[0.0, 0.0, 0.0, 0.0],
+                        scoring_mode="min",
+                    )
+
+                    # Return immediate DENY without semantic evaluation
+                    return EnforcementResponse(
+                        decision="DENY",
+                        modified_params=None,
+                        drift_score=0.0,
+                        drift_triggered=False,
+                        slice_similarities=[0.0, 0.0, 0.0, 0.0],
+                        evidence=[network_evidence],
+                    )
+
+                logger.info(
+                    f"Network policy check passed, proceeding to semantic enforcement"
+                )
+
+            except Exception as e:
+                logger.error(
+                    f"Network policy evaluation failed: {e}",
+                    exc_info=True
+                )
+                # On evaluation error, log and continue to semantic
+                # (fail-open for network policy errors to avoid blocking)
+
+        # ====================================================================
+        # STAGE 1: SEMANTIC POLICY ENFORCEMENT
+        # ====================================================================
+
         # Get services
         intent_encoder = get_intent_encoder()
 
