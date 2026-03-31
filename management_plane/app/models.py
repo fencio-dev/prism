@@ -36,6 +36,60 @@ class SessionContext(BaseModel):
 # IntentEvent — AARM action tuple a = (t, op, p, id, ctx, ts)
 # ============================================================================
 
+# ============================================================================
+# Network Policy Types — Deterministic API endpoint whitelisting
+# ============================================================================
+
+class NetworkContext(BaseModel):
+    """
+    Network metadata for network policy evaluation.
+
+    Contains HTTP/HTTPS request information extracted by the proxy
+    to match against network policy whitelists.
+    """
+    protocol: Literal["HTTP", "HTTPS"]
+    method: str  # GET, POST, PUT, DELETE, PATCH, etc.
+    url: str  # Request path (e.g., /api/users/123)
+    source_ip: Optional[str] = None
+    destination_ip: Optional[str] = None
+
+
+class NetworkEndpointRule(BaseModel):
+    """
+    Single API endpoint whitelist entry in a network policy.
+
+    Supports exact matches and wildcard patterns:
+    - Exact: /api/health
+    - Wildcard: /api/users/*, /api/*/profile
+    """
+    protocol: Literal["HTTP", "HTTPS"]
+    method: Literal["GET", "POST", "PUT", "DELETE", "PATCH"]
+    url: str
+
+
+class NetworkPolicy(BaseModel):
+    """
+    Network policy definition for deterministic API endpoint filtering.
+
+    Network policies provide a fast, pre-semantic layer of enforcement
+    that checks HTTP/HTTPS requests against a whitelist before expensive
+    ML-based semantic evaluation.
+
+    Evaluation logic:
+    - If ANY whitelist rule matches → ALLOW (proceed to semantic)
+    - If NO rules match → DENY (fail-closed, skip semantic)
+    """
+    policy_id: str
+    tenant_id: str
+    agent_id: str
+    name: str
+    status: Literal["active", "inactive"]
+    mode: Literal["Monitor", "Enforce"]
+    whitelist: list[NetworkEndpointRule]
+    created_at: float
+    updated_at: float
+
+
 class IntentEvent(BaseModel):
     event_type: Literal["tool_call", "reasoning"]
     id: str
@@ -47,6 +101,16 @@ class IntentEvent(BaseModel):
     p: Optional[str] = None    # parameter description, NL — maps to AARM p
     params: Optional[dict] = None  # structured params for MODIFY enforcement
     ctx: Optional[SessionContext] = None  # maps to AARM ctx
+
+    # Network policy enforcement fields
+    enforce_network: bool = Field(
+        default=False,
+        description="Enable network policy evaluation before semantic enforcement"
+    )
+    network_context: Optional[NetworkContext] = Field(
+        default=None,
+        description="Network metadata for network policy matching"
+    )
 
 
 # ============================================================================

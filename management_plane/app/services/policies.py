@@ -77,6 +77,27 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             "ALTER TABLE policies_v2 ADD COLUMN agent_id TEXT NOT NULL DEFAULT ''"
         )
 
+    # Network policies table (for deterministic API endpoint whitelisting)
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS network_policies (
+            tenant_id TEXT NOT NULL,
+            policy_id TEXT NOT NULL,
+            agent_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('active', 'inactive')),
+            mode TEXT NOT NULL CHECK (mode IN ('Monitor', 'Enforce')),
+            whitelist_json TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            PRIMARY KEY (tenant_id, policy_id)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_network_policies_tenant_agent ON network_policies(tenant_id, agent_id)"
+    )
+
     conn.commit()
 
 

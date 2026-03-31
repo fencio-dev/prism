@@ -18,7 +18,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .settings import config
-from .endpoints import enforcement_v2, health, policies_v2, telemetry
+from .endpoints import enforcement_v2, health, policies_v2, telemetry, network_policies
 from .services import session_store
 from mcp_server.app import mcp, initialize_tools
 
@@ -149,6 +149,7 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(enforcement_v2.router, prefix=config.API_V2_PREFIX)
 app.include_router(policies_v2.router, prefix=config.API_V2_PREFIX)
+app.include_router(network_policies.router)  # Network policies (includes /api/v2 in router prefix)
 app.include_router(telemetry.router, prefix=config.API_V2_PREFIX)
 app.mount("/mcp", mcp.http_app())
 
