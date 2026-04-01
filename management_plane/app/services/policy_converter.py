@@ -82,6 +82,21 @@ class PolicyConverter:
         if boundary.match is not None:
             params["match"] = PolicyConverter._json_param(boundary.match.model_dump())
 
+        if boundary.connection_match is not None:
+            params["connection_match"] = PolicyConverter._json_param(
+                boundary.connection_match.model_dump()
+            )
+
+        if boundary.deterministic_conditions:
+            params["deterministic_conditions"] = PolicyConverter._json_param(
+                [condition.model_dump() for condition in boundary.deterministic_conditions]
+            )
+
+        if boundary.semantic_conditions:
+            params["semantic_conditions"] = PolicyConverter._json_param(
+                [condition.model_dump() for condition in boundary.semantic_conditions]
+            )
+
         if boundary.notes:
             params["notes"] = PolicyConverter._string_param(boundary.notes)
 

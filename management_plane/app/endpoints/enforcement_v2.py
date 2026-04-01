@@ -142,7 +142,8 @@ async def enforce_v2(
                 network_result = evaluate_network_policies(
                     tenant_id=event.tenant_id,
                     agent_id=agent_id,
-                    network_ctx=event.network_context
+                    network_ctx=event.network_context,
+                    selected_policy_ids=event.dry_run_rule_ids,
                 )
 
                 logger.info(
@@ -168,6 +169,9 @@ async def enforce_v2(
                         anchor_matched=f"{event.network_context.method} {event.network_context.url}",
                         thresholds=[0.0, 0.0, 0.0, 0.0],
                         scoring_mode="min",
+                        evaluation_mode="network",
+                        connection_result=None,
+                        deterministic_results=[],
                     )
 
                     # Return immediate DENY without semantic evaluation
@@ -178,6 +182,7 @@ async def enforce_v2(
                         drift_triggered=False,
                         slice_similarities=[0.0, 0.0, 0.0, 0.0],
                         evidence=[network_evidence],
+                        evaluation_mode="network",
                     )
 
                 logger.info(
@@ -285,6 +290,7 @@ async def enforce_v2(
             drift_triggered=result.drift_triggered,
             slice_similarities=result.slice_similarities,
             evidence=result.evidence,
+            evaluation_mode=result.evaluation_mode,
         )
 
         try:

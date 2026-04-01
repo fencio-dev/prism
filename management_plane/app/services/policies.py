@@ -10,7 +10,15 @@ from contextlib import contextmanager
 from typing import Iterator, Optional
 
 from app.chroma_client import get_rules_collection, upsert_rule_payload
-from app.models import DesignBoundary, PolicyMatch, SliceThresholds, SliceWeights
+from app.models import (
+    ConnectionMatch,
+    DesignBoundary,
+    DeterministicCondition,
+    PolicyMatch,
+    SemanticCondition,
+    SliceThresholds,
+    SliceWeights,
+)
 from app.services.policy_encoder import RuleVector
 from app.settings import config
 
@@ -51,6 +59,9 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             policy_type TEXT NOT NULL,
             priority INTEGER NOT NULL DEFAULT 0,
             match_json TEXT NOT NULL,
+            connection_match_json TEXT,
+            deterministic_conditions_json TEXT,
+            semantic_conditions_json TEXT,
             thresholds_json TEXT NOT NULL,
             scoring_mode TEXT NOT NULL CHECK (scoring_mode IN ('min', 'weighted-avg')),
             weights_json TEXT,
@@ -75,6 +86,18 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     if "agent_id" not in columns:
         conn.execute(
             "ALTER TABLE policies_v2 ADD COLUMN agent_id TEXT NOT NULL DEFAULT ''"
+        )
+    if "connection_match_json" not in columns:
+        conn.execute(
+            "ALTER TABLE policies_v2 ADD COLUMN connection_match_json TEXT"
+        )
+    if "deterministic_conditions_json" not in columns:
+        conn.execute(
+            "ALTER TABLE policies_v2 ADD COLUMN deterministic_conditions_json TEXT"
+        )
+    if "semantic_conditions_json" not in columns:
+        conn.execute(
+            "ALTER TABLE policies_v2 ADD COLUMN semantic_conditions_json TEXT"
         )
 
     # Network policies table (for deterministic API endpoint whitelisting)
@@ -103,6 +126,18 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
 
 def _row_to_boundary(row: sqlite3.Row) -> DesignBoundary:
     match = PolicyMatch.model_validate(json.loads(row["match_json"]))
+    connection_match = (
+        ConnectionMatch.model_validate(json.loads(row["connection_match_json"]))
+        if row["connection_match_json"] else None
+    )
+    deterministic_conditions = [
+        DeterministicCondition.model_validate(item)
+        for item in json.loads(row["deterministic_conditions_json"] or "[]")
+    ]
+    semantic_conditions = [
+        SemanticCondition.model_validate(item)
+        for item in json.loads(row["semantic_conditions_json"] or "[]")
+    ]
     thresholds = SliceThresholds.model_validate(json.loads(row["thresholds_json"]))
     weights = SliceWeights.model_validate(json.loads(row["weights_json"])) if row["weights_json"] else None
     modification_spec = json.loads(row["modification_spec_json"]) if row["modification_spec_json"] else None
@@ -115,6 +150,9 @@ def _row_to_boundary(row: sqlite3.Row) -> DesignBoundary:
         policy_type=row["policy_type"],
         priority=row["priority"],
         match=match,
+        connection_match=connection_match,
+        deterministic_conditions=deterministic_conditions,
+        semantic_conditions=semantic_conditions,
         thresholds=thresholds,
         scoring_mode=row["scoring_mode"],
         weights=weights,
@@ -184,6 +222,9 @@ def create_policy_record(boundary: DesignBoundary, tenant_id: str) -> DesignBoun
                 policy_type,
                 priority,
                 match_json,
+                connection_match_json,
+                deterministic_conditions_json,
+                semantic_conditions_json,
                 thresholds_json,
                 scoring_mode,
                 weights_json,
@@ -192,7 +233,7 @@ def create_policy_record(boundary: DesignBoundary, tenant_id: str) -> DesignBoun
                 notes,
                 created_at,
                 updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 tenant_id,
@@ -203,6 +244,9 @@ def create_policy_record(boundary: DesignBoundary, tenant_id: str) -> DesignBoun
                 boundary.policy_type,
                 boundary.priority,
                 json.dumps(boundary.match.model_dump(), separators=(",", ":")),
+                json.dumps(boundary.connection_match.model_dump(), separators=(",", ":")) if boundary.connection_match else None,
+                json.dumps([condition.model_dump() for condition in boundary.deterministic_conditions], separators=(",", ":")),
+                json.dumps([condition.model_dump() for condition in boundary.semantic_conditions], separators=(",", ":")),
                 json.dumps(boundary.thresholds.model_dump(), separators=(",", ":")),
                 boundary.scoring_mode,
                 json.dumps(boundary.weights.model_dump(), separators=(",", ":")) if boundary.weights else None,
@@ -237,6 +281,9 @@ def update_policy_record(boundary: DesignBoundary, tenant_id: str) -> DesignBoun
                 policy_type = ?,
                 priority = ?,
                 match_json = ?,
+                connection_match_json = ?,
+                deterministic_conditions_json = ?,
+                semantic_conditions_json = ?,
                 thresholds_json = ?,
                 scoring_mode = ?,
                 weights_json = ?,
@@ -252,6 +299,9 @@ def update_policy_record(boundary: DesignBoundary, tenant_id: str) -> DesignBoun
                 boundary.policy_type,
                 boundary.priority,
                 json.dumps(boundary.match.model_dump(), separators=(",", ":")),
+                json.dumps(boundary.connection_match.model_dump(), separators=(",", ":")) if boundary.connection_match else None,
+                json.dumps([condition.model_dump() for condition in boundary.deterministic_conditions], separators=(",", ":")),
+                json.dumps([condition.model_dump() for condition in boundary.semantic_conditions], separators=(",", ":")),
                 json.dumps(boundary.thresholds.model_dump(), separators=(",", ":")),
                 boundary.scoring_mode,
                 json.dumps(boundary.weights.model_dump(), separators=(",", ":")) if boundary.weights else None,

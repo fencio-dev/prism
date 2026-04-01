@@ -134,7 +134,9 @@ class PolicyEncoder(SemanticEncoder):
         Returns:
             List of anchor strings
         """
-        return [canonicalize_params(boundary.match.op)]
+        if boundary.match.op.strip():
+            return [canonicalize_params(boundary.match.op)]
+        return []
 
     def _extract_resource_anchors(self, boundary: DesignBoundary) -> list[str]:
         """
@@ -148,7 +150,9 @@ class PolicyEncoder(SemanticEncoder):
         Returns:
             List of anchor strings
         """
-        return [canonicalize_params(boundary.match.t)]
+        if boundary.match.t.strip():
+            return [canonicalize_params(boundary.match.t)]
+        return []
 
     def _extract_data_anchors(self, boundary: DesignBoundary) -> list[str]:
         """

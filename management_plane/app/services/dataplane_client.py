@@ -60,6 +60,9 @@ class DataPlaneClient:
         """Map Python IntentEvent to the Rust data plane wire format (v1.3)."""
         identity = intent.identity
         ctx = intent.ctx
+        context_payload = ctx.model_dump() if ctx else {}
+        if intent.dry_run_rule_ids:
+            context_payload["dry_run_rule_ids"] = intent.dry_run_rule_ids
         return json.dumps({
             "id": intent.id,
             "schemaVersion": "v1.3",
@@ -70,17 +73,30 @@ class DataPlaneClient:
                 "type": identity.actor_type,
             },
             "action": intent.op,
+            "source_agent": intent.source_agent,
+            "source_layer": intent.source_layer,
+            "destination_agent": intent.destination_agent,
+            "destination_layer": intent.destination_layer,
+            "llm_tool_intent": intent.llm_tool_intent,
+            "tool_call_count": intent.tool_call_count,
             "resource": {
                 "type": intent.t,
             },
             "data": {
                 "sensitivity": (ctx.data_classifications or []) if ctx else [],
+                "content": intent.payload_text,
+                "size_bytes": (intent.params or {}).get("payload_bytes"),
+                "input_token_count": (intent.params or {}).get("input_token_count"),
+                "record_count": (intent.params or {}).get("record_count"),
             },
             "risk": {
                 "authn": "none",
+                "channel": (intent.params or {}).get("output_channel"),
             },
-            "context": ctx.model_dump() if ctx else None,
-            "tool_params": intent.params,
+            "context": context_payload or None,
+            "tool_name": intent.tool_name,
+            "tool_method": intent.tool_method,
+            "tool_params": intent.tool_params or intent.params,
         })
 
     def enforce(
@@ -135,7 +151,7 @@ class DataPlaneClient:
         if not boundaries or len(boundaries) != len(rule_vectors):
             raise ValueError("Boundaries and rule vectors must be non-empty and aligned")
 
-        agent_id = boundaries[0].tenant_id
+        agent_id = boundaries[0].agent_id or boundaries[0].tenant_id
         rules = [
             PolicyConverter.boundary_to_rule_instance(boundary, vector, agent_id)
             for boundary, vector in zip(boundaries, rule_vectors)
@@ -233,6 +249,22 @@ class DataPlaneClient:
                 anchor_matched=ev.anchor_matched,
                 thresholds=list(ev.thresholds) if ev.thresholds else [0.0, 0.0, 0.0, 0.0],
                 scoring_mode=ev.scoring_mode,
+                evaluation_mode=ev.evaluation_mode or "semantic",
+                connection_result=(
+                    json.loads(ev.connection_result_json)
+                    if getattr(ev, "connection_result_json", "")
+                    else None
+                ),
+                deterministic_results=(
+                    json.loads(ev.deterministic_results_json)
+                    if getattr(ev, "deterministic_results_json", "")
+                    else []
+                ),
+                semantic_results=(
+                    json.loads(ev.semantic_results_json)
+                    if getattr(ev, "semantic_results_json", "")
+                    else []
+                ),
             )
             for ev in response.evidence
         ]
@@ -246,6 +278,7 @@ class DataPlaneClient:
             decision_name=response.decision_name,
             modified_params=json.loads(response.modified_params) if response.modified_params else None,
             drift_triggered=response.drift_triggered,
+            evaluation_mode=response.evaluation_mode or "unknown",
         )
 
     def query_telemetry(self, **kwargs):

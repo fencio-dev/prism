@@ -187,6 +187,9 @@ message EnforceResponse {
 
   // True if drift score caused the enforcement outcome
   bool drift_triggered = 8;
+
+  // Overall evaluation mode for the returned evidence
+  string evaluation_mode = 9;
 }
 
 // Evidence from a single rule evaluation
@@ -199,6 +202,10 @@ message RuleEvidence {
   string anchor_matched = 6;    // Raw anchor text of the best-matching anchor in triggering slice
   repeated float thresholds = 7;   // Per-slot thresholds [action, resource, data, risk]
   string scoring_mode = 8;         // "weighted-avg" or "min"
+  string evaluation_mode = 9;      // "deterministic" | "semantic" | "hybrid" | "network"
+  string connection_result_json = 10;      // JSON-serialized path evaluation details
+  string deterministic_results_json = 11;  // JSON-serialized deterministic condition results
+  string semantic_results_json = 12;       // JSON-serialized semantic condition results
 }
 
 // Request to query telemetry sessions
