@@ -40,7 +40,8 @@ class NetworkPolicyResult(BaseModel):
 def evaluate_network_policies(
     tenant_id: str,
     agent_id: str,
-    network_ctx: NetworkContext
+    network_ctx: NetworkContext,
+    selected_policy_ids: Optional[list[str]] = None,
 ) -> NetworkPolicyResult:
     """
     Evaluate network policies for the given agent and network context.
@@ -79,6 +80,22 @@ def evaluate_network_policies(
             decision="ALLOW",
             reason=f"Network policy fetch failed: {str(e)}",
         )
+
+    if selected_policy_ids:
+        selected_policy_set = set(selected_policy_ids)
+        policies = [
+            policy for policy in policies
+            if policy.policy_id in selected_policy_set
+        ]
+
+        if not policies:
+            logger.debug(
+                "No selected network policies apply to this dry run, allowing"
+            )
+            return NetworkPolicyResult(
+                decision="ALLOW",
+                reason="No selected network policies to evaluate",
+            )
 
     if not policies:
         # No network policies defined = implicit allow

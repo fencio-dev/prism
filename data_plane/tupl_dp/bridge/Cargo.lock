@@ -1417,6 +1417,7 @@ dependencies = [
  "parking_lot",
  "prost",
  "rand",
+ "regex",
  "reqwest",
  "rusqlite",
  "serde",

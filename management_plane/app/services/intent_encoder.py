@@ -89,6 +89,12 @@ class IntentEncoder(SemanticEncoder):
         Returns:
             Slot text string
         """
+        if (
+            event.source_layer == "llm"
+            and event.destination_layer == "tool"
+            and event.llm_tool_intent
+        ):
+            return canonicalize_params(event.llm_tool_intent)
         return canonicalize_params(event.p)
 
     def _build_risk_slot(self, event: IntentEvent) -> str:

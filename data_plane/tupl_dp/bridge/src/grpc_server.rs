@@ -549,12 +549,17 @@ impl DataPlane for DataPlaneService {
                     anchor_matched: ev.anchor_matched.clone(),
                     thresholds: ev.thresholds.to_vec(),
                     scoring_mode: ev.scoring_mode.clone(),
+                    evaluation_mode: ev.evaluation_mode.clone(),
+                    connection_result_json: ev.connection_result_json.clone(),
+                    deterministic_results_json: ev.deterministic_results_json.clone(),
+                    semantic_results_json: ev.semantic_results_json.clone(),
                 })
                 .collect(),
             request_id: result.session_id.clone(),
             decision_name,
             modified_params,
             drift_triggered,
+            evaluation_mode: result.evaluation_mode.clone(),
         }))
     }
 

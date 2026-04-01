@@ -96,6 +96,16 @@ class IntentEvent(BaseModel):
     tenant_id: Optional[str] = None
     ts: float  # Unix timestamp — maps to AARM ts
     identity: AgentIdentity  # maps to AARM id
+    source_agent: Optional[str] = None
+    source_layer: Optional[Literal["input", "rag", "llm", "tool", "output"]] = None
+    destination_agent: Optional[str] = None
+    destination_layer: Optional[Literal["input", "rag", "llm", "tool", "output"]] = None
+    payload_text: Optional[str] = None
+    llm_tool_intent: Optional[str] = None
+    tool_name: Optional[str] = None
+    tool_method: Optional[str] = None
+    tool_call_count: Optional[int] = None
+    tool_params: Optional[dict] = None
     t: str     # target tool/resource, free-form NL — maps to AARM t
     op: str    # operation, free-form NL — maps to AARM op
     p: Optional[str] = None    # parameter description, NL — maps to AARM p
@@ -110,6 +120,10 @@ class IntentEvent(BaseModel):
     network_context: Optional[NetworkContext] = Field(
         default=None,
         description="Network metadata for network policy matching"
+    )
+    dry_run_rule_ids: Optional[list[str]] = Field(
+        default=None,
+        description="Optional Prism rule IDs to evaluate exclusively during dry runs"
     )
 
 
@@ -156,6 +170,25 @@ class PolicyMatch(BaseModel):
     ctx: Optional[str] = None  # NL anchor for risk/context slice
 
 
+class ConnectionMatch(BaseModel):
+    source_agent: str
+    source_layer: str
+    destination_agent: str
+    destination_layer: str
+
+
+class DeterministicCondition(BaseModel):
+    condition_type: str
+    operator: str
+    parameters: dict
+
+
+class SemanticCondition(BaseModel):
+    condition_type: str
+    operator: str
+    parameters: dict
+
+
 class DesignBoundary(BaseModel):
     id: str
     name: str
@@ -165,6 +198,9 @@ class DesignBoundary(BaseModel):
     policy_type: Literal["forbidden", "context_allow", "context_deny", "context_defer"]
     priority: int
     match: PolicyMatch      # m(a,C)
+    connection_match: Optional[ConnectionMatch] = None
+    deterministic_conditions: list[DeterministicCondition] = Field(default_factory=list)
+    semantic_conditions: list[SemanticCondition] = Field(default_factory=list)
     thresholds: SliceThresholds   # keep these unchanged
     scoring_mode: ScoringMode
     weights: Optional[SliceWeights] = None  # keep these unchanged
@@ -209,6 +245,9 @@ class PolicyWriteRequest(BaseModel):
     policy_type: Literal["forbidden", "context_allow", "context_deny", "context_defer"]
     priority: int
     match: PolicyMatch
+    connection_match: Optional[ConnectionMatch] = None
+    deterministic_conditions: list[DeterministicCondition] = Field(default_factory=list)
+    semantic_conditions: list[SemanticCondition] = Field(default_factory=list)
     thresholds: SliceThresholds
     scoring_mode: ScoringMode
     weights: Optional[SliceWeights] = None
@@ -279,6 +318,12 @@ class BoundaryEvidence(BaseModel):
     anchor_matched: str = Field(default="")
     thresholds: list[float] = Field(default_factory=lambda: [0.0, 0.0, 0.0, 0.0])
     scoring_mode: ScoringMode
+    evaluation_mode: Literal["deterministic", "semantic", "hybrid", "network"] = Field(
+        default="semantic"
+    )
+    connection_result: Optional[dict] = Field(default=None)
+    deterministic_results: list[dict] = Field(default_factory=list)
+    semantic_results: list[dict] = Field(default_factory=list)
 
 
 class ComparisonResult(BaseModel):
@@ -300,6 +345,9 @@ class ComparisonResult(BaseModel):
     decision_name: str = Field(default="")
     modified_params: Optional[dict] = Field(default=None)
     drift_triggered: bool = Field(default=False)
+    evaluation_mode: Literal["deterministic", "semantic", "hybrid", "network", "unknown"] = Field(
+        default="unknown"
+    )
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -332,3 +380,6 @@ class EnforcementResponse(BaseModel):
     drift_triggered: bool
     slice_similarities: list[float] = Field(min_length=4, max_length=4)
     evidence: list[BoundaryEvidence] = Field(default_factory=list)
+    evaluation_mode: Literal["deterministic", "semantic", "hybrid", "network", "unknown"] = Field(
+        default="unknown"
+    )

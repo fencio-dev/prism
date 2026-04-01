@@ -35,12 +35,17 @@ pub struct Data {
     pub sensitivity: Vec<String>,
     pub pii: Option<bool>,
     pub volume: Option<String>,
+    pub content: Option<String>,
+    pub size_bytes: Option<u64>,
+    pub input_token_count: Option<u64>,
+    pub record_count: Option<u64>,
 }
 
 /// Risk context descriptor.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Risk {
     pub authn: String,
+    pub channel: Option<String>,
 }
 
 /// Rate limit tracking context (v1.3).
@@ -62,6 +67,12 @@ pub struct IntentEvent {
     pub timestamp: f64,
     pub actor: Actor,
     pub action: String,
+    pub source_agent: Option<String>,
+    pub source_layer: Option<String>,
+    pub destination_agent: Option<String>,
+    pub destination_layer: Option<String>,
+    pub llm_tool_intent: Option<String>,
+    pub tool_call_count: Option<u64>,
     pub resource: Resource,
     pub data: Data,
     pub risk: Risk,
