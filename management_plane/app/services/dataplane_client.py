@@ -63,6 +63,7 @@ class DataPlaneClient:
         context_payload = ctx.model_dump() if ctx else {}
         if intent.dry_run_rule_ids:
             context_payload["dry_run_rule_ids"] = intent.dry_run_rule_ids
+        layer = intent.destination_layer or intent.source_layer or ""
         return json.dumps({
             "id": intent.id,
             "schemaVersion": "v1.3",
@@ -77,6 +78,7 @@ class DataPlaneClient:
             "source_layer": intent.source_layer,
             "destination_agent": intent.destination_agent,
             "destination_layer": intent.destination_layer,
+            "layer": layer,
             "llm_tool_intent": intent.llm_tool_intent,
             "tool_call_count": intent.tool_call_count,
             "resource": {
@@ -279,6 +281,7 @@ class DataPlaneClient:
             modified_params=json.loads(response.modified_params) if response.modified_params else None,
             drift_triggered=response.drift_triggered,
             evaluation_mode=response.evaluation_mode or "unknown",
+            reason=response.reason or None,
         )
 
     def query_telemetry(self, **kwargs):

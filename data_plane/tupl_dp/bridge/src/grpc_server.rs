@@ -560,6 +560,7 @@ impl DataPlane for DataPlaneService {
             modified_params,
             drift_triggered,
             evaluation_mode: result.evaluation_mode.clone(),
+            reason: result.reason.clone(),
         }))
     }
 

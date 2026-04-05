@@ -190,6 +190,9 @@ message EnforceResponse {
 
   // Overall evaluation mode for the returned evidence
   string evaluation_mode = 9;
+
+  // Optional human-readable explanation for the returned decision.
+  string reason = 10;
 }
 
 // Evidence from a single rule evaluation

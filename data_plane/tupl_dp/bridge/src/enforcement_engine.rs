@@ -141,6 +141,9 @@ pub struct EnforcementResult {
 
     /// Overall evaluation mode reflected in the returned evidence.
     pub evaluation_mode: String,
+
+    /// Optional human-readable explanation for the returned decision.
+    pub reason: String,
 }
 
 /// Evidence from a single rule evaluation
@@ -170,6 +173,36 @@ struct IntentEncodingResponse {
 // ============================================================================
 
 impl EnforcementEngine {
+    fn build_fail_closed_evidence(
+        rule_id: &str,
+        rule_name: &str,
+        details: &str,
+    ) -> RuleEvidence {
+        RuleEvidence {
+            rule_id: rule_id.to_string(),
+            rule_name: rule_name.to_string(),
+            decision: 0,
+            similarities: [0.0; 4],
+            triggering_slice: "policy".to_string(),
+            anchor_matched: details.to_string(),
+            thresholds: [0.0; 4],
+            scoring_mode: "min".to_string(),
+            evaluation_mode: "semantic".to_string(),
+            connection_result_json: String::new(),
+            deterministic_results_json: "[]".to_string(),
+            semantic_results_json: serde_json::to_string(&vec![json!({
+                "condition_type": "policy_resolution",
+                "operator": "implicit_default_deny",
+                "passed": false,
+                "target_field": "layer",
+                "expected_value": null,
+                "actual_value": null,
+                "details": details,
+            })])
+            .unwrap_or_else(|_| "[]".to_string()),
+        }
+    }
+
     fn endpoint(&self, path: &str) -> String {
         let trimmed = path.trim_start_matches('/');
         format!("{}/{}", self.encoding_endpoint, trimmed)
@@ -274,6 +307,10 @@ impl EnforcementEngine {
 
         if rules.is_empty() {
             // No rules = fail-closed (BLOCK)
+            let reason = format!(
+                "No policies are configured for layer {}; Prism denied the intent by default.",
+                layer
+            );
             println!(
                 "No rules configured for layer {}, blocking by default",
                 layer
@@ -296,14 +333,19 @@ impl EnforcementEngine {
                 decision: 0,
                 slice_similarities: [0.0; 4],
                 rules_evaluated: 0,
-                evidence: vec![],
+                evidence: vec![Self::build_fail_closed_evidence(
+                    "implicit-default-deny",
+                    "Implicit Default Deny",
+                    &reason,
+                )],
                 session_id: session_id.clone().unwrap_or_else(|| request_id.to_string()),
                 enforcement_decision: Some(EnforcementDecision {
                     decision: Decision::Deny,
                     modified_params: None,
                     drift_triggered: false,
                 }),
-                evaluation_mode: "unknown".to_string(),
+                evaluation_mode: "semantic".to_string(),
+                reason,
             });
         }
 
@@ -350,6 +392,10 @@ impl EnforcementEngine {
                         (Some(vector), duration, norm)
                     }
                     Err(err) => {
+                        let reason = format!(
+                            "Semantic intent encoding failed; Prism denied the intent by default. Error: {}",
+                            err
+                        );
                         println!(
                             "Intent encoding failed: {}. Blocking intent (fail-closed).",
                             err
@@ -372,14 +418,19 @@ impl EnforcementEngine {
                             decision: 0,
                             slice_similarities: [0.0; 4],
                             rules_evaluated: 0,
-                            evidence: vec![],
+                            evidence: vec![Self::build_fail_closed_evidence(
+                                "semantic-evaluation-error",
+                                "Semantic Evaluation Failed",
+                                &reason,
+                            )],
                             session_id: session_id.clone().unwrap_or_else(|| request_id.to_string()),
                             enforcement_decision: Some(EnforcementDecision {
                                 decision: Decision::Deny,
                                 modified_params: None,
                                 drift_triggered: false,
                             }),
-                            evaluation_mode: "unknown".to_string(),
+                            evaluation_mode: "semantic".to_string(),
+                            reason,
                         });
                     }
                 }
@@ -632,6 +683,19 @@ impl EnforcementEngine {
             let total_duration = session_start.elapsed().as_micros() as u64;
             let rules_evaluated = evidence.len();
             let evaluation_mode = Self::derive_overall_evaluation_mode(&evidence);
+            let reason = match enforcement_decision.decision {
+                Decision::Allow => "Matched an allow policy.".to_string(),
+                Decision::Modify => "Matched an allow policy with parameter modification.".to_string(),
+                Decision::StepUp => "Matched an allow policy, but drift exceeded the configured threshold.".to_string(),
+                Decision::Defer => "Matched a defer policy.".to_string(),
+                Decision::Deny => {
+                    if evidence.is_empty() {
+                        "No policy evidence was returned; Prism denied the intent.".to_string()
+                    } else {
+                        "No configured policy produced an allow outcome; Prism denied the intent fail-closed.".to_string()
+                    }
+                }
+            };
 
             if let (Some(ref t), Some(ref sid)) = (telemetry, session_id) {
                 t.with_session(sid, |session| {
@@ -655,6 +719,7 @@ impl EnforcementEngine {
                 session_id: session_id.clone().unwrap_or_else(|| request_id.to_string()),
                 enforcement_decision: Some(enforcement_decision),
                 evaluation_mode,
+                reason,
             }
         };
 

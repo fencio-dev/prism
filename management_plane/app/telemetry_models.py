@@ -96,6 +96,10 @@ class CallSummary(BaseModel):
     """
     call_id: str = Field(..., description="Unique call identifier")
     agent_id: str = Field(..., description="Agent that triggered the call")
+    session_id: Optional[str] = Field(
+        None,
+        description="Runtime session identifier for grouping calls into runs",
+    )
     ts_ms: int = Field(..., description="Unix timestamp in milliseconds")
     decision: str = Field(..., description="Enforcement decision")
     op: Optional[str] = Field(None, description="Operation type")
@@ -133,3 +137,38 @@ class CallDetail(BaseModel):
     """
     call: CallSummary = Field(..., description="Call summary fields")
     enforcement_result: dict = Field(..., description="Deserialized enforcement result")
+
+
+class TelemetryRunSummary(BaseModel):
+    """
+    Summary of a runtime enforcement run grouped by session_id.
+    """
+
+    session_id: str = Field(..., description="Runtime session identifier")
+    agent_id: str = Field(..., description="Agent that produced the run")
+    started_at_ms: int = Field(..., description="First call timestamp in milliseconds")
+    last_seen_at_ms: int = Field(..., description="Most recent call timestamp in milliseconds")
+    total_calls: int = Field(..., description="Total enforcement calls recorded")
+    allow_count: int = Field(..., description="Count of ALLOW decisions")
+    deny_count: int = Field(..., description="Count of DENY decisions")
+    modify_count: int = Field(..., description="Count of MODIFY decisions")
+    step_up_count: int = Field(..., description="Count of STEP_UP decisions")
+    defer_count: int = Field(..., description="Count of DEFER decisions")
+    final_decision: str = Field(..., description="Final decision observed in the run")
+    last_op: Optional[str] = Field(None, description="Latest operation string")
+    last_target: Optional[str] = Field(None, description="Latest target string")
+    latest_drift_score: float = Field(
+        0.0,
+        description="Latest drift score seen in the run",
+    )
+
+
+class TelemetryRunsResponse(BaseModel):
+    """
+    Paginated runtime run summaries grouped by session_id.
+    """
+
+    runs: list[TelemetryRunSummary] = Field(..., description="List of runtime runs")
+    total_count: int = Field(..., description="Total number of matching runs")
+    limit: int = Field(..., description="Pagination limit")
+    offset: int = Field(..., description="Pagination offset")

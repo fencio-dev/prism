@@ -348,6 +348,7 @@ class ComparisonResult(BaseModel):
     evaluation_mode: Literal["deterministic", "semantic", "hybrid", "network", "unknown"] = Field(
         default="unknown"
     )
+    reason: Optional[str] = Field(default=None)
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -383,3 +384,4 @@ class EnforcementResponse(BaseModel):
     evaluation_mode: Literal["deterministic", "semantic", "hybrid", "network", "unknown"] = Field(
         default="unknown"
     )
+    reason: Optional[str] = Field(default=None)

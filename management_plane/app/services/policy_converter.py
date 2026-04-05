@@ -27,9 +27,14 @@ class PolicyConverter:
         """Build a RuleInstance protobuf message from a canonical boundary."""
 
         payload = PolicyConverter.rule_vector_to_anchor_payload(rule_vector)
+        layer = ""
+        if boundary.connection_match is not None:
+            layer = boundary.connection_match.destination_layer
 
         rule_instance = RuleInstance(
             rule_id=boundary.id,
+            family_id=PolicyConverter.RULE_TYPE,
+            layer=layer,
             agent_id=boundary.agent_id if boundary.agent_id else tenant_id,
             priority=boundary.priority,
             enabled=boundary.status == "active",

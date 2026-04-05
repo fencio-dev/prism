@@ -78,6 +78,7 @@ def _init_db() -> None:
                 CREATE TABLE IF NOT EXISTS enforce_calls (
                     call_id            TEXT PRIMARY KEY,
                     agent_id           TEXT NOT NULL,
+                    session_id         TEXT,
                     ts_ms              INTEGER NOT NULL,
                     decision           TEXT NOT NULL,
                     op                 TEXT,
@@ -94,6 +95,8 @@ def _init_db() -> None:
             }
             if "intent_event" not in columns:
                 conn.execute("ALTER TABLE enforce_calls ADD COLUMN intent_event TEXT")
+            if "session_id" not in columns:
+                conn.execute("ALTER TABLE enforce_calls ADD COLUMN session_id TEXT")
             # Idempotent: add is_dry_run column if it doesn't exist
             try:
                 conn.execute("ALTER TABLE enforce_calls ADD COLUMN is_dry_run INTEGER NOT NULL DEFAULT 0")
@@ -180,6 +183,7 @@ def write_call(agent_id: str, request_id: str, action: str, decision: str) -> No
 def insert_call(
     call_id: str,
     agent_id: str,
+    session_id: str | None,
     ts_ms: int,
     decision: str,
     op: str | None,
@@ -201,12 +205,13 @@ def insert_call(
                 conn.execute(
                     """
                     INSERT OR REPLACE INTO enforce_calls
-                        (call_id, agent_id, ts_ms, decision, op, t, enforcement_result, intent_event, is_dry_run)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        (call_id, agent_id, session_id, ts_ms, decision, op, t, enforcement_result, intent_event, is_dry_run)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         call_id,
                         agent_id,
+                        session_id,
                         ts_ms,
                         decision,
                         op,
@@ -222,10 +227,10 @@ def insert_call(
                 conn.execute(
                     """
                     INSERT OR REPLACE INTO enforce_calls
-                        (call_id, agent_id, ts_ms, decision, op, t, enforcement_result)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                        (call_id, agent_id, session_id, ts_ms, decision, op, t, enforcement_result)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (call_id, agent_id, ts_ms, decision, op, t, enforcement_result_json),
+                    (call_id, agent_id, session_id, ts_ms, decision, op, t, enforcement_result_json),
                 )
             conn.commit()
         finally:
@@ -576,6 +581,7 @@ def list_calls(
     limit: int = 50,
     offset: int = 0,
     agent_id: str | None = None,
+    session_id: str | None = None,
     decision: str | None = None,
     start_ms: int | None = None,
     end_ms: int | None = None,
@@ -601,6 +607,10 @@ def list_calls(
             conditions.append("agent_id = ?")
             params.append(agent_id)
 
+        if session_id is not None:
+            conditions.append("session_id = ?")
+            params.append(session_id)
+
         if decision is not None:
             conditions.append("decision = ?")
             params.append(decision)
@@ -622,7 +632,7 @@ def list_calls(
         conn = _get_connection()
         try:
             rows = conn.execute(
-                f"SELECT call_id, agent_id, ts_ms, decision, op, t, is_dry_run FROM enforce_calls {where_clause} ORDER BY ts_ms DESC LIMIT ? OFFSET ?",
+                f"SELECT call_id, agent_id, session_id, ts_ms, decision, op, t, is_dry_run FROM enforce_calls {where_clause} ORDER BY ts_ms DESC LIMIT ? OFFSET ?",
                 params + [limit, offset],
             ).fetchall()
 
@@ -653,7 +663,7 @@ def get_call(call_id: str) -> dict | None:
             try:
                 row = conn.execute(
                     """
-                    SELECT call_id, agent_id, ts_ms, decision, op, t, enforcement_result, intent_event
+                    SELECT call_id, agent_id, session_id, ts_ms, decision, op, t, enforcement_result, intent_event, is_dry_run
                     FROM enforce_calls
                     WHERE call_id = ?
                     """,
@@ -664,7 +674,7 @@ def get_call(call_id: str) -> dict | None:
                     raise
                 row = conn.execute(
                     """
-                    SELECT call_id, agent_id, ts_ms, decision, op, t, enforcement_result
+                    SELECT call_id, agent_id, session_id, ts_ms, decision, op, t, enforcement_result, is_dry_run
                     FROM enforce_calls
                     WHERE call_id = ?
                     """,
@@ -708,6 +718,120 @@ def delete_calls() -> int:
     except Exception as exc:
         logger.error("session_store: delete_calls failed: %s", exc, exc_info=True)
         return 0
+
+
+def list_call_runs(
+    limit: int = 50,
+    offset: int = 0,
+    agent_id: str | None = None,
+    decision: str | None = None,
+    start_ms: int | None = None,
+    end_ms: int | None = None,
+    is_dry_run: bool | None = None,
+) -> tuple[list[dict], int]:
+    """
+    Group enforce_calls into runtime runs using session_id.
+
+    Returns paginated summaries ordered by most recent activity.
+    """
+    try:
+        decision_filter = decision.upper() if decision is not None else None
+        conditions = []
+        params: list = []
+
+        if agent_id is not None:
+            conditions.append("agent_id = ?")
+            params.append(agent_id)
+
+        if start_ms is not None:
+            conditions.append("ts_ms >= ?")
+            params.append(start_ms)
+
+        if end_ms is not None:
+            conditions.append("ts_ms <= ?")
+            params.append(end_ms)
+
+        if is_dry_run is not None:
+            conditions.append("is_dry_run = ?")
+            params.append(1 if is_dry_run else 0)
+
+        where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+        conn = _get_connection()
+        try:
+            rows = conn.execute(
+                f"""
+                SELECT call_id, agent_id, session_id, ts_ms, decision, op, t, enforcement_result
+                FROM enforce_calls
+                {where_clause}
+                ORDER BY ts_ms DESC
+                """,
+                params,
+            ).fetchall()
+        finally:
+            conn.close()
+
+        runs_by_session: dict[str, dict] = {}
+
+        for row in rows:
+            session_key = row["session_id"] or row["agent_id"] or row["call_id"]
+            if session_key not in runs_by_session:
+                latest_drift_score = 0.0
+                enforcement_result = row["enforcement_result"]
+                if enforcement_result:
+                    try:
+                        parsed = json.loads(enforcement_result)
+                        latest_drift_score = float(parsed.get("drift_score") or 0.0)
+                    except Exception:
+                        latest_drift_score = 0.0
+
+                runs_by_session[session_key] = {
+                    "session_id": session_key,
+                    "agent_id": row["agent_id"],
+                    "started_at_ms": row["ts_ms"],
+                    "last_seen_at_ms": row["ts_ms"],
+                    "total_calls": 0,
+                    "allow_count": 0,
+                    "deny_count": 0,
+                    "modify_count": 0,
+                    "step_up_count": 0,
+                    "defer_count": 0,
+                    "final_decision": row["decision"],
+                    "last_op": row["op"],
+                    "last_target": row["t"],
+                    "latest_drift_score": latest_drift_score,
+                }
+
+            run = runs_by_session[session_key]
+            run["total_calls"] += 1
+            run["started_at_ms"] = min(run["started_at_ms"], row["ts_ms"])
+
+            row_decision = (row["decision"] or "").upper()
+            if row_decision == "ALLOW":
+                run["allow_count"] += 1
+            elif row_decision == "DENY":
+                run["deny_count"] += 1
+            elif row_decision == "MODIFY":
+                run["modify_count"] += 1
+            elif row_decision == "STEP_UP":
+                run["step_up_count"] += 1
+            elif row_decision == "DEFER":
+                run["defer_count"] += 1
+
+        grouped_runs = list(runs_by_session.values())
+        if decision_filter is not None:
+            grouped_runs = [
+                run
+                for run in grouped_runs
+                if (run.get("final_decision") or "").upper() == decision_filter
+            ]
+        total_count = len(grouped_runs)
+        paginated_runs = grouped_runs[offset: offset + limit]
+        return paginated_runs, total_count
+
+    except Exception as exc:
+        logger.error("session_store: list_call_runs failed: %s", exc, exc_info=True)
+        return [], 0
 
 
 # ---------------------------------------------------------------------------

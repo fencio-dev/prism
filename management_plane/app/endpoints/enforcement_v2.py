@@ -22,7 +22,12 @@ from typing import Optional, Any
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.auth import User, get_current_tenant
-from app.models import ComparisonResult, EnforcementResponse, IntentEvent
+from app.models import (
+    BoundaryEvidence,
+    ComparisonResult,
+    EnforcementResponse,
+    IntentEvent,
+)
 from app.services import (
     DataPlaneClient,
     DataPlaneError,
@@ -81,6 +86,43 @@ def get_data_plane_client():
     return DataPlaneClient(url=url, insecure=True)
 
 
+def _persist_enforcement_record(
+    *,
+    agent_id: str,
+    request_id: str,
+    event: IntentEvent,
+    enforcement_response: EnforcementResponse,
+    decision_name: str,
+    dry_run: bool,
+    session_id: str,
+) -> None:
+    """
+    Persist enforcement output for telemetry and session history.
+    """
+    try:
+        session_store.update_call_decision(agent_id, request_id, decision_name)
+    except Exception as exc:
+        logger.error("session_store update_call_decision failed: %s", exc)
+
+    try:
+        session_store.insert_call(
+            call_id=event.id,
+            agent_id=agent_id,
+            session_id=session_id,
+            ts_ms=int(event.ts * 1000),
+            decision=decision_name,
+            op=event.op,
+            t=event.t,
+            enforcement_result_json=json.dumps(
+                enforcement_response.model_dump(mode="json")
+            ),
+            intent_event_json=json.dumps(event.model_dump(mode="json")),
+            is_dry_run=dry_run,
+        )
+    except Exception as exc:
+        logger.error("session_store insert_call failed: %s", exc)
+
+
 # ============================================================================
 # V2 Endpoints
 # ============================================================================
@@ -127,7 +169,32 @@ async def enforce_v2(
     except Exception:
         agent_id = ""
 
-    logger.info(f"V2 enforce request: {request_id}, op={event.op}, t={event.t}, agent_id={agent_id}")
+    logger.info(
+        "V2 enforce request: %s, op=%s, t=%s, agent_id=%s, "
+        "source_layer=%s, destination_layer=%s",
+        request_id,
+        event.op,
+        event.t,
+        agent_id,
+        event.source_layer,
+        event.destination_layer,
+    )
+    logger.info(
+        "V2 enforce intent payload for %s: %s",
+        request_id,
+        json.dumps(
+            event.model_dump(mode="json", exclude_none=False),
+            ensure_ascii=False,
+        ),
+    )
+
+    session_id = event.identity.principal_id or agent_id or event.id
+    action = event.op or ""
+
+    try:
+        session_store.write_call(agent_id, request_id, action, "pending")
+    except Exception as exc:
+        logger.error("session_store write_call failed: %s", exc)
 
     try:
         # ====================================================================
@@ -175,7 +242,7 @@ async def enforce_v2(
                     )
 
                     # Return immediate DENY without semantic evaluation
-                    return EnforcementResponse(
+                    enforcement_response = EnforcementResponse(
                         decision="DENY",
                         modified_params=None,
                         drift_score=0.0,
@@ -183,7 +250,18 @@ async def enforce_v2(
                         slice_similarities=[0.0, 0.0, 0.0, 0.0],
                         evidence=[network_evidence],
                         evaluation_mode="network",
+                        reason=network_result.reason,
                     )
+                    _persist_enforcement_record(
+                        agent_id=agent_id,
+                        request_id=request_id,
+                        event=event,
+                        enforcement_response=enforcement_response,
+                        decision_name="DENY",
+                        dry_run=dry_run,
+                        session_id=session_id,
+                    )
+                    return enforcement_response
 
                 logger.info(
                     f"Network policy check passed, proceeding to semantic enforcement"
@@ -216,13 +294,6 @@ async def enforce_v2(
             raise HTTPException(status_code=503, detail="Intent encoding failed")
 
         current_vector = vector.tolist()
-
-        # Step 4: Ensure session row exists
-        action = event.op or ""
-        try:
-            session_store.write_call(agent_id, request_id, action, "pending")
-        except Exception as exc:
-            logger.error("session_store write_call failed: %s", exc)
 
         # Step 5: Initialize baseline vector (first call only, no-op after)
         if agent_id:
@@ -276,12 +347,6 @@ async def enforce_v2(
         else:
             decision_name = "ALLOW" if result.decision == 1 else "DENY"
 
-        # Step 8.5: Persist final decision to session store
-        try:
-            session_store.update_call_decision(agent_id, request_id, decision_name)
-        except Exception as exc:
-            logger.error("session_store update_call_decision failed: %s", exc)
-
         # Step 9: Build and persist EnforcementResponse, then return it
         enforcement_response = EnforcementResponse(
             decision=decision_name,
@@ -291,22 +356,17 @@ async def enforce_v2(
             slice_similarities=result.slice_similarities,
             evidence=result.evidence,
             evaluation_mode=result.evaluation_mode,
+            reason=result.reason,
         )
-
-        try:
-            session_store.insert_call(
-                call_id=event.id,
-                agent_id=agent_id,
-                ts_ms=int(event.ts * 1000),
-                decision=decision_name,
-                op=event.op,
-                t=event.t,
-                enforcement_result_json=json.dumps(enforcement_response.model_dump()),
-                intent_event_json=json.dumps(event.model_dump(mode="json")),
-                is_dry_run=dry_run,
-            )
-        except Exception as exc:
-            logger.error("session_store insert_call failed: %s", exc)
+        _persist_enforcement_record(
+            agent_id=agent_id,
+            request_id=request_id,
+            event=event,
+            enforcement_response=enforcement_response,
+            decision_name=decision_name,
+            dry_run=dry_run,
+            session_id=session_id,
+        )
 
         return enforcement_response
 

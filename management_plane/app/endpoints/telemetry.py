@@ -13,6 +13,8 @@ from app.telemetry_models import (
     SessionDetail,
     CallsResponse,
     CallSummary,
+    TelemetryRunsResponse,
+    TelemetryRunSummary,
 )
 
 logger = logging.getLogger(__name__)
@@ -98,6 +100,7 @@ def query_calls(
     limit: int = Query(50, le=200),
     offset: int = Query(0),
     agent_id: str | None = Query(None),
+    session_id: str | None = Query(None),
     decision: str | None = Query(None),
     start_ms: int | None = Query(None),
     end_ms: int | None = Query(None),
@@ -107,6 +110,7 @@ def query_calls(
         limit=limit,
         offset=offset,
         agent_id=agent_id,
+        session_id=session_id,
         decision=decision,
         start_ms=start_ms,
         end_ms=end_ms,
@@ -117,6 +121,36 @@ def query_calls(
 
     return CallsResponse(
         calls=calls,
+        total_count=total_count,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get("/telemetry/runs", response_model=TelemetryRunsResponse)
+def query_runs(
+    limit: int = Query(50, le=200),
+    offset: int = Query(0),
+    agent_id: str | None = Query(None),
+    decision: str | None = Query(None),
+    start_ms: int | None = Query(None),
+    end_ms: int | None = Query(None),
+    is_dry_run: bool | None = Query(False),
+):
+    rows, total_count = session_store.list_call_runs(
+        limit=limit,
+        offset=offset,
+        agent_id=agent_id,
+        decision=decision,
+        start_ms=start_ms,
+        end_ms=end_ms,
+        is_dry_run=is_dry_run,
+    )
+
+    runs = [TelemetryRunSummary(**row) for row in rows]
+
+    return TelemetryRunsResponse(
+        runs=runs,
         total_count=total_count,
         limit=limit,
         offset=offset,
@@ -144,10 +178,12 @@ def get_call_detail(
     call = CallSummaryWithIntentEvent(
         call_id=row["call_id"],
         agent_id=row["agent_id"],
+        session_id=row.get("session_id"),
         ts_ms=row["ts_ms"],
         decision=row["decision"],
         op=row.get("op"),
         t=row.get("t"),
+        is_dry_run=bool(row.get("is_dry_run")),
         intent_event=intent_event,
     )
     enforcement_result = json.loads(row["enforcement_result"])
