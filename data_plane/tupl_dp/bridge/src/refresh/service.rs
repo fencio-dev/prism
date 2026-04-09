@@ -1,6 +1,6 @@
 //! Event-driven rule refresh service.
 //!
-//! Triggers rule reload from SQLite on demand via gRPC endpoint.
+//! Triggers rule reload from db_infra on demand via gRPC endpoint.
 //! Replaces in-memory HashMap with latest from persistent storage.
 
 use crate::bridge::Bridge;
@@ -29,10 +29,10 @@ impl RefreshService {
         Self { bridge }
     }
 
-    /// Trigger immediate refresh from SQLite.
+    /// Trigger immediate refresh from db_infra.
     ///
     /// Called via gRPC RefreshRules() endpoint.
-    /// Rebuilds the in-memory HashMap from SQLite.
+    /// Rebuilds the in-memory HashMap from db_infra.
     ///
     /// # Returns
     /// Stats about the refresh operation or error message.

@@ -9,7 +9,8 @@ import os
 from typing import Literal
 
 import grpc
-from fastapi import APIRouter, Depends, status
+import httpx
+from fastapi import APIRouter, Response, status
 from pydantic import BaseModel, Field
 
 from ..settings import config
@@ -28,7 +29,7 @@ class HealthResponse(BaseModel):
 
 
 @router.get("/health", response_model=HealthResponse, status_code=status.HTTP_200_OK)
-async def health_check() -> HealthResponse:
+async def health_check(response: Response) -> HealthResponse:
     """
     Health check endpoint.
 
@@ -79,6 +80,17 @@ async def health_check() -> HealthResponse:
         logger.error(f"Data Plane gRPC health check failed: {e}")
         components["data_plane_grpc"] = False
 
+    # Check db_infra connectivity
+    try:
+        db_infra_url = os.getenv("DB_INFRA_BASE_URL", config.DB_INFRA_BASE_URL).rstrip("/")
+        health_url = f"{db_infra_url}/health"
+        with httpx.Client(timeout=config.DB_INFRA_TIMEOUT_SECONDS) as client:
+            db_response = client.get(health_url)
+        components["db_infra"] = db_response.status_code == 200
+    except Exception as e:
+        logger.error(f"db_infra health check failed: {e}")
+        components["db_infra"] = False
+
     # Determine overall status
     if all(components.values()):
         overall_status = "ok"
@@ -86,6 +98,9 @@ async def health_check() -> HealthResponse:
         overall_status = "degraded"
     else:
         overall_status = "error"
+
+    if overall_status != "ok":
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
 
     logger.debug(f"Health check: {overall_status} - {components}")
 

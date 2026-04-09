@@ -2,13 +2,12 @@
 Rule Installer - Installs DesignBoundary policies into the Data Plane.
 
 Handles:
-1. Startup sync of active policies from SQLite + Chroma to the Rust data plane
+1. Startup sync of active policies from db_infra + Chroma to the Rust data plane
 2. gRPC communication with Data Plane
 3. Proto conversion helpers for rule installation
 """
 
 import logging
-import sqlite3
 import time
 from typing import Optional
 from .settings import config
@@ -19,45 +18,29 @@ logger = logging.getLogger(__name__)
 
 def sync_active_policies_to_dataplane() -> None:
     """
-    Re-install all active policies from SQLite + Chroma into the Rust data plane.
+    Re-install all active policies from db_infra + Chroma into the Rust data plane.
 
     Called at startup to ensure the data plane HashMap is not stale after a
     management plane restart.  Failures are logged as warnings; they do not
     prevent the app from starting (the data plane may not be available yet).
     """
-    import os
     import numpy as np
     from app.models import DesignBoundary
     from app.services.policy_encoder import RuleVector
     from app.services.dataplane_client import DataPlaneClient, DataPlaneError
     from app.chroma_client import fetch_rule_payload as _fetch_payload
 
-    # Resolve SQLite path the same way policies.py does.
-    db_url = config.DATABASE_URL
-    if not db_url.startswith("sqlite:///"):
-        logger.warning("startup sync: unsupported DATABASE_URL scheme, skipping")
-        return
-    raw_path = db_url[len("sqlite:///"):]
-    sqlite_path = raw_path if raw_path.startswith("/") else os.path.abspath(raw_path)
-
-    if not os.path.exists(sqlite_path):
-        logger.info("startup sync: no SQLite DB yet, nothing to sync")
-        return
-
     # Fetch all active policy rows across all tenants.
     try:
-        conn = sqlite3.connect(sqlite_path, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        rows = conn.execute(
-            "SELECT tenant_id, policy_id FROM policies_v2 WHERE status = 'active'"
-        ).fetchall()
-        conn.close()
+        from .services.policies import list_policy_records
+
+        boundaries = list_policy_records(None, status="active")
     except Exception as exc:
-        logger.warning("startup sync: failed to query SQLite: %s", exc)
+        logger.warning("startup sync: failed to query db_infra policies: %s", exc)
         return
 
-    if not rows:
-        logger.info("startup sync: no active policies found, nothing to sync")
+    if not boundaries:
+        logger.info("startup sync: no active policies found in db_infra, nothing to sync")
         return
 
     dp_url = config.data_plane_url
@@ -65,9 +48,9 @@ def sync_active_policies_to_dataplane() -> None:
 
     synced = 0
     errors = 0
-    for row in rows:
-        tenant_id = row["tenant_id"]
-        policy_id = row["policy_id"]
+    for boundary in boundaries:
+        tenant_id = boundary.tenant_id
+        policy_id = boundary.id
         try:
             payload = _fetch_payload(tenant_id, policy_id)
             if not payload:
@@ -221,4 +204,3 @@ class RuleInstaller:
         except Exception as exc:
             logger.warning("Failed to fetch rule payload for %s: %s", rule_id, exc)
             return None
-

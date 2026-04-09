@@ -18,4 +18,4 @@ pub mod writer;
 pub use query::{HitlogQuery, QueryFilter};
 pub use recorder::{TelemetryConfig, TelemetryRecorder};
 pub use session::{EnforcementSession, RuleEvaluationEvent, SessionEvent};
-pub use writer::{HitlogConfig, HitlogWriter, RotationPolicy};
+pub use writer::{HitlogConfig, HitlogWriter};

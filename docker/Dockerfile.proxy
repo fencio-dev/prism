@@ -9,12 +9,18 @@ RUN apt-get update && \
     && rm -rf /var/lib/apt/lists/*
 
 ARG TARGETARCH
+ARG PROXY_VERSION=latest
 RUN case "$TARGETARCH" in \
       amd64) BINARY="fencio-proxy-linux-amd64" ;; \
       arm64) BINARY="fencio-proxy-linux-arm64" ;; \
       *) echo "Unsupported arch: $TARGETARCH" && exit 1 ;; \
     esac && \
-    curl -fsSL "https://github.com/fencio-dev/proxy-releases/releases/latest/download/${BINARY}" \
+    if [ "$PROXY_VERSION" = "latest" ]; then \
+      DOWNLOAD_URL="https://github.com/fencio-dev/proxy-releases/releases/latest/download/${BINARY}"; \
+    else \
+      DOWNLOAD_URL="https://github.com/fencio-dev/proxy-releases/releases/download/${PROXY_VERSION}/${BINARY}"; \
+    fi && \
+    curl -fsSL "$DOWNLOAD_URL" \
       -o /app/fencio-proxy && \
     chmod +x /app/fencio-proxy
 

@@ -13,7 +13,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=================================================");
     println!();
     
-    println!("Initializing Bridge with tiered storage...");
+    println!("Initializing Bridge with db_infra-backed storage...");
     let bridge_inst = match Bridge::init() {
         Ok(bridge) => Arc::new(bridge),
         Err(e) => {

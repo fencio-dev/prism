@@ -133,13 +133,11 @@ impl DataPlaneService {
 
         // Enable telemetry for enforcement tracking
         use crate::telemetry::{TelemetryConfig, TelemetryRecorder};
-        let hitlog_dir = std::env::var("HITLOG_DIR").unwrap_or_else(|_| {
-            let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-            format!("{}/var/hitlogs", home)
-        });
+        let db_infra_base_url = std::env::var("DB_INFRA_BASE_URL")
+            .unwrap_or_else(|_| "http://localhost:8020".to_string());
 
         let telemetry_config = TelemetryConfig {
-            hitlog_dir: hitlog_dir.clone(),
+            db_infra_base_url: db_infra_base_url.clone(),
             ..TelemetryConfig::default()
         };
 
@@ -155,8 +153,7 @@ impl DataPlaneService {
             .expect("Failed to create enforcement engine with telemetry"),
         );
 
-        // Initialize hitlog query for telemetry (clone hitlog_dir as it was moved to telemetry)
-        let hitlog_query = Arc::new(crate::telemetry::query::HitlogQuery::new(&hitlog_dir));
+        let hitlog_query = Arc::new(crate::telemetry::query::HitlogQuery::new(&db_infra_base_url));
 
         // Initialize refresh service for warm storage refresh
         let refresh_service = Arc::new(RefreshService::new(Arc::clone(&bridge)));

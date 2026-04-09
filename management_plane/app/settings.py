@@ -54,8 +54,11 @@ class Config:
     EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
     EMBEDDING_CACHE_SIZE: int = int(os.getenv("EMBEDDING_CACHE_SIZE", "10000"))
 
-    # Database Configuration (Week 3)
-    DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./mgmt_plane.db")
+    # Central data plane configuration
+    DB_INFRA_BASE_URL: str = os.getenv("DB_INFRA_BASE_URL", "http://localhost:8020")
+    DB_INFRA_TIMEOUT_SECONDS: float = float(
+        os.getenv("DB_INFRA_TIMEOUT_SECONDS", "5.0")
+    )
 
     # Data Plane Configuration
     data_plane_url: str = os.getenv("DATA_PLANE_URL", f"localhost:{os.getenv('DATA_PLANE_PORT', '50051')}")
@@ -64,10 +67,6 @@ class Config:
     CHROMA_URL: str = os.getenv("CHROMA_URL", str(PROJECT_ROOT / "data" / "chroma_data"))
     CHROMA_COLLECTION_PREFIX: str = os.getenv("CHROMA_COLLECTION_PREFIX", "rules_")
 
-    SESSION_DB_PATH: str = os.getenv(
-        "SESSION_DB_PATH",
-        str(PROJECT_ROOT / "data" / "sessions.db"),
-    )
     CANONICALIZATION_LOG_RETENTION_DAYS: int = int(os.getenv("CANONICALIZATION_LOG_RETENTION_DAYS", "90"))
     POLICY_AUDIT_LOG_DIR: str = os.getenv(
         "POLICY_AUDIT_LOG_DIR",

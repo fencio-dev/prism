@@ -1,344 +1,166 @@
-"""Policy storage and anchor payload persistence."""
+"""Policy storage and anchor payload persistence via db_infra."""
 
 from __future__ import annotations
 
 import json
 import logging
-import os
-import sqlite3
-from contextlib import contextmanager
-from typing import Iterator, Optional
+from typing import Optional
 
 from app.chroma_client import get_rules_collection, upsert_rule_payload
-from app.models import (
-    ConnectionMatch,
-    DesignBoundary,
-    DeterministicCondition,
-    PolicyMatch,
-    SemanticCondition,
-    SliceThresholds,
-    SliceWeights,
-)
+from app.models import DesignBoundary
+from app.services.db_infra_client import db_infra_client
 from app.services.policy_encoder import RuleVector
-from app.settings import config
 
 logger = logging.getLogger(__name__)
 
 
-def _sqlite_path() -> str:
-    url = config.DATABASE_URL
-    if url.startswith("sqlite:///"):
-        raw_path = url[len("sqlite:///"):]
-        if raw_path.startswith("/"):
-            return raw_path
-        return os.path.abspath(raw_path)
-    raise ValueError("Only sqlite DATABASE_URLs are supported")
-
-
-@contextmanager
-def _get_connection() -> Iterator[sqlite3.Connection]:
-    path = _sqlite_path()
-    conn = sqlite3.connect(path, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    try:
-        _ensure_schema(conn)
-        yield conn
-    finally:
-        conn.close()
-
-
-def _ensure_schema(conn: sqlite3.Connection) -> None:
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS policies_v2 (
-            tenant_id TEXT NOT NULL,
-            policy_id TEXT NOT NULL,
-            agent_id TEXT NOT NULL DEFAULT '',
-            name TEXT NOT NULL,
-            status TEXT NOT NULL,
-            policy_type TEXT NOT NULL,
-            priority INTEGER NOT NULL DEFAULT 0,
-            match_json TEXT NOT NULL,
-            connection_match_json TEXT,
-            deterministic_conditions_json TEXT,
-            semantic_conditions_json TEXT,
-            thresholds_json TEXT NOT NULL,
-            scoring_mode TEXT NOT NULL CHECK (scoring_mode IN ('min', 'weighted-avg')),
-            weights_json TEXT,
-            drift_threshold REAL,
-            modification_spec_json TEXT,
-            notes TEXT,
-            created_at REAL NOT NULL,
-            updated_at REAL NOT NULL,
-            PRIMARY KEY (tenant_id, policy_id)
-        )
-        """
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_policies_v2_tenant ON policies_v2(tenant_id)"
-    )
-
-    columns = {row[1] for row in conn.execute("PRAGMA table_info(policies_v2)").fetchall()}
-    if "scoring_mode" not in columns:
-        conn.execute(
-            "ALTER TABLE policies_v2 ADD COLUMN scoring_mode TEXT NOT NULL DEFAULT 'weighted-avg'"
-        )
-    if "agent_id" not in columns:
-        conn.execute(
-            "ALTER TABLE policies_v2 ADD COLUMN agent_id TEXT NOT NULL DEFAULT ''"
-        )
-    if "connection_match_json" not in columns:
-        conn.execute(
-            "ALTER TABLE policies_v2 ADD COLUMN connection_match_json TEXT"
-        )
-    if "deterministic_conditions_json" not in columns:
-        conn.execute(
-            "ALTER TABLE policies_v2 ADD COLUMN deterministic_conditions_json TEXT"
-        )
-    if "semantic_conditions_json" not in columns:
-        conn.execute(
-            "ALTER TABLE policies_v2 ADD COLUMN semantic_conditions_json TEXT"
-        )
-
-    # Network policies table (for deterministic API endpoint whitelisting)
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS network_policies (
-            tenant_id TEXT NOT NULL,
-            policy_id TEXT NOT NULL,
-            agent_id TEXT NOT NULL,
-            name TEXT NOT NULL,
-            status TEXT NOT NULL CHECK (status IN ('active', 'inactive')),
-            mode TEXT NOT NULL CHECK (mode IN ('Monitor', 'Enforce')),
-            whitelist_json TEXT NOT NULL,
-            created_at REAL NOT NULL,
-            updated_at REAL NOT NULL,
-            PRIMARY KEY (tenant_id, policy_id)
-        )
-        """
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_network_policies_tenant_agent ON network_policies(tenant_id, agent_id)"
-    )
-
-    conn.commit()
-
-
-def _row_to_boundary(row: sqlite3.Row) -> DesignBoundary:
-    match = PolicyMatch.model_validate(json.loads(row["match_json"]))
-    connection_match = (
-        ConnectionMatch.model_validate(json.loads(row["connection_match_json"]))
-        if row["connection_match_json"] else None
-    )
-    deterministic_conditions = [
-        DeterministicCondition.model_validate(item)
-        for item in json.loads(row["deterministic_conditions_json"] or "[]")
-    ]
-    semantic_conditions = [
-        SemanticCondition.model_validate(item)
-        for item in json.loads(row["semantic_conditions_json"] or "[]")
-    ]
-    thresholds = SliceThresholds.model_validate(json.loads(row["thresholds_json"]))
-    weights = SliceWeights.model_validate(json.loads(row["weights_json"])) if row["weights_json"] else None
-    modification_spec = json.loads(row["modification_spec_json"]) if row["modification_spec_json"] else None
+def _row_to_boundary(row: dict) -> DesignBoundary:
     return DesignBoundary(
         id=row["policy_id"],
         name=row["name"],
         tenant_id=row["tenant_id"],
-        agent_id=row["agent_id"] if row["agent_id"] else "",
+        agent_id=row.get("agent_id") or "",
         status=row["status"],
         policy_type=row["policy_type"],
         priority=row["priority"],
-        match=match,
-        connection_match=connection_match,
-        deterministic_conditions=deterministic_conditions,
-        semantic_conditions=semantic_conditions,
-        thresholds=thresholds,
+        match=json.loads(row["match_json"]),
+        connection_match=(
+            json.loads(row["connection_match_json"])
+            if row.get("connection_match_json")
+            else None
+        ),
+        deterministic_conditions=json.loads(
+            row.get("deterministic_conditions_json") or "[]"
+        ),
+        semantic_conditions=json.loads(row.get("semantic_conditions_json") or "[]"),
+        thresholds=json.loads(row["thresholds_json"]),
         scoring_mode=row["scoring_mode"],
-        weights=weights,
-        drift_threshold=row["drift_threshold"],
-        modification_spec=modification_spec,
-        notes=row["notes"],
+        weights=json.loads(row["weights_json"]) if row.get("weights_json") else None,
+        drift_threshold=row.get("drift_threshold"),
+        modification_spec=(
+            json.loads(row["modification_spec_json"])
+            if row.get("modification_spec_json")
+            else None
+        ),
+        notes=row.get("notes"),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
 
 
+def _boundary_payload(boundary: DesignBoundary) -> dict:
+    return {
+        "tenant_id": boundary.tenant_id,
+        "policy_id": boundary.id,
+        "agent_id": boundary.agent_id or "",
+        "name": boundary.name,
+        "status": boundary.status,
+        "policy_type": boundary.policy_type,
+        "priority": boundary.priority,
+        "match_json": json.dumps(boundary.match.model_dump(), separators=(",", ":")),
+        "connection_match_json": (
+            json.dumps(boundary.connection_match.model_dump(), separators=(",", ":"))
+            if boundary.connection_match
+            else None
+        ),
+        "deterministic_conditions_json": json.dumps(
+            [item.model_dump() for item in boundary.deterministic_conditions],
+            separators=(",", ":"),
+        ),
+        "semantic_conditions_json": json.dumps(
+            [item.model_dump() for item in boundary.semantic_conditions],
+            separators=(",", ":"),
+        ),
+        "thresholds_json": json.dumps(
+            boundary.thresholds.model_dump(),
+            separators=(",", ":"),
+        ),
+        "scoring_mode": boundary.scoring_mode,
+        "weights_json": (
+            json.dumps(boundary.weights.model_dump(), separators=(",", ":"))
+            if boundary.weights
+            else None
+        ),
+        "drift_threshold": boundary.drift_threshold,
+        "modification_spec_json": (
+            json.dumps(boundary.modification_spec, separators=(",", ":"))
+            if boundary.modification_spec
+            else None
+        ),
+        "notes": boundary.notes,
+        "created_at": boundary.created_at,
+        "updated_at": boundary.updated_at,
+    }
+
+
 def fetch_policy_record(tenant_id: str, policy_id: str) -> Optional[DesignBoundary]:
-    with _get_connection() as conn:
-        row = conn.execute(
-            """
-            SELECT * FROM policies_v2
-            WHERE tenant_id = ? AND policy_id = ?
-            """,
-            (tenant_id, policy_id),
-        ).fetchone()
+    row = db_infra_client._request_json(
+        "GET",
+        f"/api/v1/prism-management/policies/{tenant_id}/{policy_id}",
+        allow_not_found=True,
+    )
     return _row_to_boundary(row) if row else None
 
 
-def list_policy_records(tenant_id: str, agent_id: str = "") -> list[DesignBoundary]:
-    with _get_connection() as conn:
-        if agent_id:
-            rows = conn.execute(
-                """
-                SELECT * FROM policies_v2
-                WHERE tenant_id = ? AND agent_id = ?
-                ORDER BY updated_at DESC
-                """,
-                (tenant_id, agent_id),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                """
-                SELECT * FROM policies_v2
-                WHERE tenant_id = ?
-                ORDER BY updated_at DESC
-                """,
-                (tenant_id,),
-            ).fetchall()
-    return [_row_to_boundary(row) for row in rows]
+def list_policy_records(
+    tenant_id: str | None,
+    agent_id: str = "",
+    status: str | None = None,
+) -> list[DesignBoundary]:
+    params = {}
+    if tenant_id is not None:
+        params["tenant_id"] = tenant_id
+    if agent_id:
+        params["agent_id"] = agent_id
+    if status is not None:
+        params["status"] = status
+    response = db_infra_client._request_json(
+        "GET",
+        "/api/v1/prism-management/policies",
+        params=params or None,
+    )
+    return [_row_to_boundary(row) for row in response.get("policies", [])]
 
 
 def create_policy_record(boundary: DesignBoundary, tenant_id: str) -> DesignBoundary:
-    with _get_connection() as conn:
-        existing = conn.execute(
-            """
-            SELECT 1 FROM policies_v2
-            WHERE tenant_id = ? AND policy_id = ?
-            """,
-            (tenant_id, boundary.id),
-        ).fetchone()
-        if existing:
-            raise ValueError("Policy already exists")
-
-        conn.execute(
-            """
-            INSERT INTO policies_v2 (
-                tenant_id,
-                policy_id,
-                agent_id,
-                name,
-                status,
-                policy_type,
-                priority,
-                match_json,
-                connection_match_json,
-                deterministic_conditions_json,
-                semantic_conditions_json,
-                thresholds_json,
-                scoring_mode,
-                weights_json,
-                drift_threshold,
-                modification_spec_json,
-                notes,
-                created_at,
-                updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                tenant_id,
-                boundary.id,
-                boundary.agent_id,
-                boundary.name,
-                boundary.status,
-                boundary.policy_type,
-                boundary.priority,
-                json.dumps(boundary.match.model_dump(), separators=(",", ":")),
-                json.dumps(boundary.connection_match.model_dump(), separators=(",", ":")) if boundary.connection_match else None,
-                json.dumps([condition.model_dump() for condition in boundary.deterministic_conditions], separators=(",", ":")),
-                json.dumps([condition.model_dump() for condition in boundary.semantic_conditions], separators=(",", ":")),
-                json.dumps(boundary.thresholds.model_dump(), separators=(",", ":")),
-                boundary.scoring_mode,
-                json.dumps(boundary.weights.model_dump(), separators=(",", ":")) if boundary.weights else None,
-                boundary.drift_threshold,
-                json.dumps(boundary.modification_spec, separators=(",", ":")) if boundary.modification_spec else None,
-                boundary.notes,
-                boundary.created_at,
-                boundary.updated_at,
-            ),
-        )
-        conn.commit()
+    existing = fetch_policy_record(tenant_id, boundary.id)
+    if existing:
+        raise ValueError("Policy already exists")
+    db_infra_client._request_json(
+        "POST",
+        "/api/v1/prism-management/policies",
+        payload=_boundary_payload(boundary),
+    )
     return boundary
 
 
 def update_policy_record(boundary: DesignBoundary, tenant_id: str) -> DesignBoundary:
-    with _get_connection() as conn:
-        row = conn.execute(
-            """
-            SELECT 1 FROM policies_v2
-            WHERE tenant_id = ? AND policy_id = ?
-            """,
-            (tenant_id, boundary.id),
-        ).fetchone()
-        if not row:
-            raise ValueError("Policy not found")
-
-        conn.execute(
-            """
-            UPDATE policies_v2
-            SET name = ?,
-                status = ?,
-                policy_type = ?,
-                priority = ?,
-                match_json = ?,
-                connection_match_json = ?,
-                deterministic_conditions_json = ?,
-                semantic_conditions_json = ?,
-                thresholds_json = ?,
-                scoring_mode = ?,
-                weights_json = ?,
-                drift_threshold = ?,
-                modification_spec_json = ?,
-                notes = ?,
-                updated_at = ?
-            WHERE tenant_id = ? AND policy_id = ?
-            """,
-            (
-                boundary.name,
-                boundary.status,
-                boundary.policy_type,
-                boundary.priority,
-                json.dumps(boundary.match.model_dump(), separators=(",", ":")),
-                json.dumps(boundary.connection_match.model_dump(), separators=(",", ":")) if boundary.connection_match else None,
-                json.dumps([condition.model_dump() for condition in boundary.deterministic_conditions], separators=(",", ":")),
-                json.dumps([condition.model_dump() for condition in boundary.semantic_conditions], separators=(",", ":")),
-                json.dumps(boundary.thresholds.model_dump(), separators=(",", ":")),
-                boundary.scoring_mode,
-                json.dumps(boundary.weights.model_dump(), separators=(",", ":")) if boundary.weights else None,
-                boundary.drift_threshold,
-                json.dumps(boundary.modification_spec, separators=(",", ":")) if boundary.modification_spec else None,
-                boundary.notes,
-                boundary.updated_at,
-                tenant_id,
-                boundary.id,
-            ),
-        )
-        conn.commit()
+    existing = fetch_policy_record(tenant_id, boundary.id)
+    if not existing:
+        raise ValueError("Policy not found")
+    db_infra_client._request_json(
+        "POST",
+        "/api/v1/prism-management/policies",
+        payload=_boundary_payload(boundary),
+    )
     return boundary
 
 
 def delete_policy_record(tenant_id: str, policy_id: str) -> bool:
-    with _get_connection() as conn:
-        result = conn.execute(
-            """
-            DELETE FROM policies_v2
-            WHERE tenant_id = ? AND policy_id = ?
-            """,
-            (tenant_id, policy_id),
-        )
-        conn.commit()
-        return result.rowcount > 0
+    response = db_infra_client._request_json(
+        "DELETE",
+        f"/api/v1/prism-management/policies/{tenant_id}/{policy_id}",
+        allow_not_found=True,
+    )
+    return bool(response.get("deleted"))
 
 
 def delete_all_policy_records(tenant_id: str) -> int:
-    """Delete every policy row for *tenant_id*.  Returns the number of rows deleted."""
-    with _get_connection() as conn:
-        result = conn.execute(
-            "DELETE FROM policies_v2 WHERE tenant_id = ?",
-            (tenant_id,),
-        )
-        conn.commit()
-        return result.rowcount
+    response = db_infra_client._request_json(
+        "DELETE",
+        f"/api/v1/prism-management/policies/{tenant_id}",
+    )
+    return int(response.get("deleted_count", 0))
 
 
 def build_anchor_payload(rule_vector: RuleVector) -> dict[str, object]:

@@ -1,10 +1,9 @@
 use crate::families::DesignBoundaryRule;
 use crate::rule_vector::RuleVector;
+use crate::storage::db_infra::{DbInfraClient, PrismRuleRecord};
 use crate::types::{now_ms, RuleInstance, RuleMetadata};
-use parking_lot::{Mutex, RwLock};
-use rusqlite::{params, Connection};
+use parking_lot::RwLock;
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 // ================================================================================================
@@ -14,34 +13,18 @@ use std::sync::Arc;
 /// Configuration for Bridge storage.
 #[derive(Clone, Debug)]
 pub struct StorageConfig {
-    /// Path to cold storage database (SQLite)
-    pub cold_storage_path: PathBuf,
+    /// Base URL for the centralized db_infra service.
+    pub db_infra_base_url: String,
 }
 
 impl Default for StorageConfig {
     fn default() -> Self {
         Self {
-            cold_storage_path: PathBuf::from("./var/data/cold_storage.db"),
+            db_infra_base_url: std::env::var("DB_INFRA_BASE_URL")
+                .unwrap_or_else(|_| "http://localhost:8020".to_string()),
         }
     }
 }
-
-// ================================================================================================
-// SQLITE SCHEMA
-// ================================================================================================
-
-const SCHEMA: &str = "
-CREATE TABLE IF NOT EXISTS rules (
-    id          TEXT PRIMARY KEY,
-    tenant_id   TEXT NOT NULL,
-    layer       TEXT,
-    priority    INTEGER NOT NULL DEFAULT 0,
-    rule_json   TEXT NOT NULL,
-    anchors_bin BLOB NOT NULL,
-    status      TEXT NOT NULL DEFAULT 'active',
-    updated_at  REAL NOT NULL
-);
-";
 
 // ================================================================================================
 // BRIDGE STRUCTURE
@@ -50,8 +33,8 @@ CREATE TABLE IF NOT EXISTS rules (
 /// The Bridge is the root data structure for storing all rules in the data plane.
 ///
 /// Rules are stored in a single in-memory HashMap (the fast read path) backed by
-/// SQLite as the single source of truth for persistence. The HashMap is rebuilt
-/// from SQLite on startup and on InstallRules calls.
+/// db_infra as the single source of truth for persistence. The HashMap is rebuilt
+/// from db_infra on startup and on refresh calls.
 #[derive(Debug)]
 pub struct Bridge {
     active_version: Arc<RwLock<u64>>,
@@ -59,8 +42,8 @@ pub struct Bridge {
     created_at: u64,
     /// In-memory store: rule_id → (rule instance, rule vector)
     rules: Arc<RwLock<HashMap<String, (Arc<dyn RuleInstance>, RuleVector)>>>,
-    /// SQLite connection for persistence
-    db: Arc<Mutex<Connection>>,
+    /// db_infra client for persistence
+    db_client: Arc<DbInfraClient>,
 }
 
 impl Bridge {
@@ -71,29 +54,15 @@ impl Bridge {
 
     /// Creates a new Bridge with the specified storage configuration.
     pub fn new(storage_config: StorageConfig) -> Result<Self, String> {
-        // Ensure parent directory exists
-        if let Some(parent) = storage_config.cold_storage_path.parent() {
-            if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent)
-                    .map_err(|e| format!("Failed to create storage directory: {}", e))?;
-            }
-        }
-
-        let conn = Connection::open(&storage_config.cold_storage_path)
-            .map_err(|e| format!("Failed to open SQLite database: {}", e))?;
-
-        conn.execute_batch(SCHEMA)
-            .map_err(|e| format!("Failed to create schema: {}", e))?;
-
-        let db = Arc::new(Mutex::new(conn));
         let rules = Arc::new(RwLock::new(HashMap::new()));
+        let db_client = Arc::new(DbInfraClient::new(storage_config.db_infra_base_url));
 
         let bridge = Bridge {
             active_version: Arc::new(RwLock::new(0)),
             staged_version: Arc::new(RwLock::new(None)),
             created_at: now_ms(),
             rules,
-            db,
+            db_client,
         };
 
         bridge.rebuild_from_db()?;
@@ -110,45 +79,21 @@ impl Bridge {
     // PRIVATE: REBUILD FROM DATABASE
     // ============================================================================================
 
-    /// Rebuilds the in-memory HashMap from all rows in SQLite.
+    /// Rebuilds the in-memory HashMap from all rows in db_infra.
     /// Called at init and can be called on reconnect.
     fn rebuild_from_db(&self) -> Result<(), String> {
-        // Collect all rows while holding the DB lock, then release it before
-        // acquiring the rules write lock to avoid lock ordering issues.
-        // The named binding for `rows` forces collection before the block closes,
-        // ensuring conn and stmt are dropped before we take the write lock on rules.
-        let rows: Vec<(String, Option<String>, i64, String, Vec<u8>)> = {
-            let conn = self.db.lock();
-
-            let mut stmt = conn
-                .prepare(
-                    "SELECT id, layer, priority, rule_json, anchors_bin FROM rules WHERE status = 'active'",
-                )
-                .map_err(|e| format!("Prepare failed during rebuild: {}", e))?;
-
-            let collected: Result<Vec<_>, _> = stmt
-                .query_map([], |row| {
-                    let id: String = row.get(0)?;
-                    let layer: Option<String> = row.get(1)?;
-                    let priority: i64 = row.get(2)?;
-                    let rule_json: String = row.get(3)?;
-                    let anchors_bin: Vec<u8> = row.get(4)?;
-                    Ok((id, layer, priority, rule_json, anchors_bin))
-                })
-                .map_err(|e| format!("Query failed during rebuild: {}", e))?
-                .collect();
-
-            // stmt and conn are still alive here but collected is owned; we can drop them
-            drop(stmt);
-            drop(conn);
-
-            collected.map_err(|e| format!("Row collection failed during rebuild: {}", e))?
-        };
+        let rows = self.db_client.list_active_rules()?;
 
         let mut map = self.rules.write();
         map.clear();
 
-        for (id, _layer, priority, rule_json, anchors_bin) in rows {
+        for PrismRuleRecord {
+            rule_id: id,
+            rule_json,
+            anchors_json,
+            ..
+        } in rows
+        {
             // Deserialize metadata from the stored JSON
             let metadata: RuleMetadata = match serde_json::from_str(&rule_json) {
                 Ok(m) => m,
@@ -159,6 +104,14 @@ impl Bridge {
             };
 
             // Deserialize the RuleVector from raw little-endian f32 bytes
+            let anchors_bin: Vec<u8> = match serde_json::from_str(&anchors_json) {
+                Ok(value) => value,
+                Err(e) => {
+                    eprintln!("Skipping rule {} with invalid anchor payload JSON: {}", id, e);
+                    continue;
+                }
+            };
+
             let rule_vector = match deserialize_rule_vector(&anchors_bin) {
                 Ok(v) => v,
                 Err(e) => {
@@ -177,10 +130,6 @@ impl Bridge {
                 metadata.description,
                 metadata.params,
             ));
-
-            // Suppress unused variable warning for priority — it came from the DB column
-            let _ = priority;
-
             map.insert(id, (rule, rule_vector));
         }
 
@@ -237,7 +186,7 @@ impl Bridge {
     // RULE OPERATIONS
     // ============================================================================================
 
-    /// Adds a rule and stores its pre-encoded anchors. Upserts into SQLite AND inserts into HashMap.
+    /// Adds a rule and stores its pre-encoded anchors. Upserts into db_infra and inserts into HashMap.
     pub fn add_rule_with_anchors(
         &self,
         rule: Arc<dyn RuleInstance>,
@@ -250,6 +199,8 @@ impl Bridge {
             .map_err(|e| format!("Failed to serialize rule metadata: {}", e))?;
 
         let anchors_bin = serialize_rule_vector(&anchors);
+        let anchors_json = serde_json::to_string(&anchors_bin)
+            .map_err(|e| format!("Failed to serialize rule anchors: {}", e))?;
 
         let tenant_id = metadata
             .scope
@@ -261,23 +212,16 @@ impl Bridge {
         let layer: Option<&str> = metadata.layer.as_deref();
         let updated_at = (now_ms() as f64) / 1000.0;
 
-        {
-            let conn = self.db.lock();
-            conn.execute(
-                "INSERT OR REPLACE INTO rules (id, tenant_id, layer, priority, rule_json, anchors_bin, status, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'active', ?7)",
-                params![
-                    rule_id,
-                    tenant_id,
-                    layer,
-                    metadata.priority as i64,
-                    rule_json,
-                    anchors_bin,
-                    updated_at,
-                ],
-            )
-            .map_err(|e| format!("SQLite upsert failed: {}", e))?;
-        }
+        self.db_client.upsert_rule(&PrismRuleRecord {
+            rule_id: rule_id.clone(),
+            tenant_id,
+            layer: layer.map(|value| value.to_string()),
+            priority: metadata.priority as i64,
+            rule_json,
+            anchors_json,
+            status: "active".to_string(),
+            updated_at,
+        })?;
 
         self.rules
             .write()
@@ -294,11 +238,7 @@ impl Bridge {
             return Ok(false);
         }
 
-        {
-            let conn = self.db.lock();
-            conn.execute("DELETE FROM rules WHERE id = ?1", params![rule_id])
-                .map_err(|e| format!("SQLite delete failed: {}", e))?;
-        }
+        self.db_client.delete_rule(rule_id)?;
 
         self.increment_version();
         Ok(true)
@@ -307,11 +247,7 @@ impl Bridge {
     /// Clears all rules and storage state.
     pub fn clear_all(&self) {
         self.rules.write().clear();
-
-        let conn = self.db.lock();
-        let _ = conn.execute("DELETE FROM rules", []);
-
-        drop(conn);
+        let _ = self.db_client.clear_rules();
         self.increment_version();
     }
 

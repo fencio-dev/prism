@@ -1,1 +1,3 @@
-//! Storage module (legacy tiers removed).
+//! Storage backends for the bridge.
+
+pub mod db_infra;

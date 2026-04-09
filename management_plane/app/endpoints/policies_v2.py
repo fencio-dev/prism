@@ -271,7 +271,7 @@ async def delete_policy(
         result = await asyncio.to_thread(
             client.remove_policy,
             policy_id,
-            current_user.id,
+            policy.agent_id,
         )
     except DataPlaneError as exc:
         raise HTTPException(status_code=502, detail=f"Data Plane error: {exc}") from exc

@@ -15,8 +15,8 @@ pub struct TelemetryConfig {
     /// Enable telemetry recording
     pub enabled: bool,
 
-    /// Directory for hitlog files
-    pub hitlog_dir: String,
+    /// Base URL for the centralized db_infra service.
+    pub db_infra_base_url: String,
 
     /// Sample rate (0.0 - 1.0). 1.0 = record all
     pub sample_rate: f64,
@@ -38,7 +38,8 @@ impl Default for TelemetryConfig {
     fn default() -> Self {
         TelemetryConfig {
             enabled: true,
-            hitlog_dir: "/var/hitlogs".to_string(),
+            db_infra_base_url: std::env::var("DB_INFRA_BASE_URL")
+                .unwrap_or_else(|_| "http://localhost:8020".to_string()),
             sample_rate: 1.0,
             buffer_size: 100,
             flush_interval_secs: 5,
