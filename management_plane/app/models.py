@@ -195,6 +195,7 @@ class DesignBoundary(BaseModel):
     tenant_id: str
     agent_id: Optional[str] = ""
     status: Literal["active", "disabled"]
+    mode: Literal["Monitor", "Enforce"] = "Enforce"
     policy_type: Literal["forbidden", "context_allow", "context_deny", "context_defer"]
     priority: int
     match: PolicyMatch      # m(a,C)
@@ -242,6 +243,7 @@ class PolicyWriteRequest(BaseModel):
     tenant_id: str
     agent_id: Optional[str] = ""
     status: Literal["active", "disabled"]
+    mode: Literal["Monitor", "Enforce"] = "Enforce"
     policy_type: Literal["forbidden", "context_allow", "context_deny", "context_defer"]
     priority: int
     match: PolicyMatch
@@ -274,6 +276,12 @@ class PolicyWriteRequest(BaseModel):
         if self.scoring_mode == "weighted-avg" and self.weights is None:
             raise ValueError("weights are required when scoring_mode is 'weighted-avg'")
         return self
+
+
+class PolicyModePatchRequest(BaseModel):
+    """Mode-only policy update payload."""
+
+    mode: Literal["Monitor", "Enforce"]
 
 
 class PolicyListResponse(BaseModel):
@@ -313,6 +321,8 @@ class BoundaryEvidence(BaseModel):
     boundary_name: str
     effect: Literal["allow", "deny"]
     decision: Literal[0, 1]
+    policy_mode: Literal["Monitor", "Enforce"] = Field(default="Enforce")
+    policy_type: Optional[str] = Field(default=None)
     similarities: list[float] = Field(min_length=4, max_length=4)
     triggering_slice: str = Field(default="")
     anchor_matched: str = Field(default="")

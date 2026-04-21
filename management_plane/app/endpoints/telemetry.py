@@ -163,6 +163,15 @@ def delete_calls():
     return {"deleted_count": deleted}
 
 
+@router.patch("/telemetry/calls/{call_id}/enforced-decision")
+def update_enforced_decision(call_id: str, payload: dict[str, str]):
+    enforced_decision = (payload.get("enforced_decision") or "").upper()
+    if enforced_decision not in {"ALLOW", "DENY", "MODIFY", "STEP_UP", "DEFER"}:
+        raise HTTPException(status_code=400, detail="Invalid enforced decision")
+    session_store.update_call_enforced_decision(call_id, enforced_decision)
+    return {"ok": True}
+
+
 @router.get("/telemetry/calls/{call_id}", response_model=CallDetailWithIntentEvent)
 def get_call_detail(
     call_id: str,
@@ -180,7 +189,9 @@ def get_call_detail(
         agent_id=row["agent_id"],
         session_id=row.get("session_id"),
         ts_ms=row["ts_ms"],
-        decision=row["decision"],
+        decision=row["enforced_decision"],
+        prism_decision=row["prism_decision"],
+        enforced_decision=row["enforced_decision"],
         op=row.get("op"),
         t=row.get("t"),
         is_dry_run=bool(row.get("is_dry_run")),

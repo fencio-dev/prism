@@ -3,7 +3,6 @@
 .git
 .data
 data
-data_plane/tupl_dp
 management_plane/.venv
 management_plane/tests
 ui/node_modules
@@ -11,3 +10,5 @@ ui/node_modules
 .DS_Store
 *.pyc
 __pycache__
+data_plane/tupl_dp/bridge/target
+data_plane/tupl_dp/bridge/var

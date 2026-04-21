@@ -50,8 +50,8 @@ def evaluate_network_policies(
     1. Fetch all active network policies for agent_id
     2. For each policy, check if any whitelist rule matches the request
     3. If ANY rule matches → ALLOW
-    4. If NO rules match → DENY (fail-closed)
-    5. Respect policy mode: Monitor logs only, Enforce blocks
+    4. If NO rules match → DENY (fail-closed raw verdict)
+    5. Surface the policy mode so the proxy can decide whether to enforce
 
     Args:
         tenant_id: Tenant identifier
@@ -139,42 +139,25 @@ def evaluate_network_policies(
                     reason=f"Matched whitelist rule: {rule.method} {rule.url}",
                 )
 
-    # No rules matched - fail closed
-    # But respect mode: Monitor vs Enforce
-    for policy in policies:
-        if policy.mode == "Monitor":
-            logger.warning(
-                f"Network policy MONITOR: Would deny "
-                f"{network_ctx.method} {network_ctx.url} "
-                f"(not in whitelist, but monitor mode allows)"
-            )
+    # No rules matched - fail closed. Prism should still surface the raw
+    # verdict independent of mode so the proxy can decide whether to enforce.
+    effective_mode = (
+        "Enforce" if any(policy.mode == "Enforce" for policy in policies) else "Monitor"
+    )
 
-            # In monitor mode, log but allow
-            return NetworkPolicyResult(
-                decision="ALLOW",
-                policy_id=policy.policy_id,
-                policy_name=policy.name,
-                mode="Monitor",
-                reason=(
-                    f"Not in whitelist but policy in Monitor mode "
-                    f"(would DENY in Enforce mode)"
-                ),
-            )
-
-    # All policies are in Enforce mode and no match found - deny
     logger.warning(
         f"Network policy DENY: {network_ctx.method} {network_ctx.url} "
-        f"not in any whitelist (fail-closed)"
+        f"not in any whitelist (raw verdict, mode={effective_mode})"
     )
 
     return NetworkPolicyResult(
         decision="DENY",
         policy_id=policies[0].policy_id,
         policy_name=policies[0].name,
-        mode="Enforce",
+        mode=effective_mode,
         reason=(
             f"{network_ctx.method} {network_ctx.url} not in whitelist "
-            f"(fail-closed enforcement)"
+            f"(raw policy verdict, mode={effective_mode})"
         ),
     )
 

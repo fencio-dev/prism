@@ -14,9 +14,16 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from app.auth import User, get_current_tenant
 from app.settings import config
 from app.endpoints.enforcement_v2 import get_policy_encoder
-from app.models import DesignBoundary, PolicyClearResponse, PolicyDeleteResponse, PolicyListResponse, PolicyWriteRequest
+from app.models import (
+    DesignBoundary,
+    PolicyClearResponse,
+    PolicyDeleteResponse,
+    PolicyListResponse,
+    PolicyModePatchRequest,
+    PolicyWriteRequest,
+)
 from app.services import DataPlaneClient, DataPlaneError
-from app.chroma_client import delete_tenant_collection
+from app.chroma_client import delete_tenant_collection, fetch_rule_payload, upsert_rule_payload
 from app.services.policies import (
     build_anchor_payload,
     create_policy_record,
@@ -64,6 +71,7 @@ def _boundary_from_request(
         tenant_id=tenant_id,
         agent_id=request.agent_id,
         status=request.status,
+        mode=request.mode,
         policy_type=request.policy_type,
         priority=request.priority,
         match=request.match,
@@ -107,6 +115,7 @@ def _persist_anchor_payload(
             "policy_id": boundary.id,
             "boundary_name": boundary.name,
             "status": boundary.status,
+            "mode": boundary.mode,
             "policy_type": boundary.policy_type,
         },
     )
@@ -135,6 +144,27 @@ def _install_to_dataplane(boundary: DesignBoundary, rule_vector: "RuleVector") -
             "Unexpected error installing policy %s to data plane: %s",
             boundary.id, exc,
         )
+
+
+def _load_rule_vector_from_payload(tenant_id: str, policy_id: str) -> "RuleVector":
+    import numpy as np
+    from app.services.policy_encoder import RuleVector
+
+    payload = fetch_rule_payload(tenant_id, policy_id)
+    if not payload:
+        raise HTTPException(status_code=500, detail="Stored policy payload not found")
+
+    anchors = payload.get("anchors")
+    if not isinstance(anchors, dict):
+        raise HTTPException(status_code=500, detail="Stored policy payload is invalid")
+
+    rule_vector = RuleVector()
+    for slot in ("action", "resource", "data", "risk"):
+        rows = anchors.get(f"{slot}_anchors") or []
+        if rows:
+            rule_vector.layers[slot] = np.array(rows, dtype=np.float32)
+        rule_vector.anchor_counts[slot] = int(anchors.get(f"{slot}_count", 0))
+    return rule_vector
 
 
 @router.post("", response_model=DesignBoundary, status_code=status.HTTP_201_CREATED)
@@ -222,6 +252,70 @@ async def update_policy(
         "result": "ok",
     })
     return boundary
+
+
+@router.patch("/{policy_id}/mode", response_model=DesignBoundary, status_code=status.HTTP_200_OK)
+async def update_policy_mode(
+    policy_id: str,
+    request: PolicyModePatchRequest,
+    current_user: User = Depends(get_current_tenant),
+) -> DesignBoundary:
+    existing = fetch_policy_record(current_user.id, policy_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Policy not found")
+
+    now = time.time()
+    updated = existing.model_copy(update={"mode": request.mode, "updated_at": now})
+
+    try:
+        update_policy_record(updated, current_user.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    try:
+        stored_payload = fetch_rule_payload(current_user.id, policy_id)
+        if not stored_payload:
+            raise HTTPException(status_code=500, detail="Stored policy payload not found")
+        boundary_payload = stored_payload.get("boundary")
+        anchors_payload = stored_payload.get("anchors")
+        if not isinstance(boundary_payload, dict) or not isinstance(anchors_payload, dict):
+            raise HTTPException(status_code=500, detail="Stored policy payload is invalid")
+
+        boundary_payload["mode"] = request.mode
+        updated_payload = {
+            "boundary": boundary_payload,
+            "anchors": anchors_payload,
+        }
+        metadata = {
+            "policy_id": updated.id,
+            "boundary_name": updated.name,
+            "status": updated.status,
+            "mode": updated.mode,
+            "policy_type": updated.policy_type,
+        }
+        upsert_rule_payload(current_user.id, updated.id, updated_payload, metadata)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Failed to persist updated policy payload for %s: %s", policy_id, exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Policy payload storage failed") from exc
+
+    try:
+        rule_vector = _load_rule_vector_from_payload(current_user.id, policy_id)
+    except HTTPException:
+        raise
+
+    _install_to_dataplane(updated, rule_vector)
+
+    _write_policy_audit({
+        "ts": now,
+        "request_id": str(uuid.uuid4()),
+        "operation": "update_policy_mode",
+        "policy_id": updated.id,
+        "tenant_id": current_user.id,
+        "result": updated.mode,
+    })
+    return updated
 
 
 @router.patch("/{policy_id}/toggle", response_model=DesignBoundary, status_code=status.HTTP_200_OK)

@@ -1,3 +1,20 @@
+FROM --platform=$TARGETPLATFORM rust:1.84-bookworm AS builder
+
+WORKDIR /src
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    protobuf-compiler \
+    pkg-config \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY data_plane/ /src/data_plane/
+
+WORKDIR /src/data_plane/tupl_dp/bridge
+
+RUN cargo build --release --bin bridge-server
+
 FROM debian:bookworm-slim
 
 WORKDIR /app
@@ -9,21 +26,7 @@ RUN apt-get update && \
     libssl3 \
     && rm -rf /var/lib/apt/lists/*
 
-ARG TARGETARCH
-ARG PRISM_VERSION=latest
-RUN case "$TARGETARCH" in \
-      amd64) BINARY="bridge-server-linux-amd64" ;; \
-      arm64) BINARY="bridge-server-linux-arm64" ;; \
-      *) echo "Unsupported arch: $TARGETARCH" && exit 1 ;; \
-    esac && \
-    if [ "$PRISM_VERSION" = "latest" ]; then \
-      DOWNLOAD_URL="https://github.com/fencio-dev/prism/releases/latest/download/${BINARY}"; \
-    else \
-      DOWNLOAD_URL="https://github.com/fencio-dev/prism/releases/download/${PRISM_VERSION}/${BINARY}"; \
-    fi && \
-    curl -fsSL "$DOWNLOAD_URL" \
-      -o /app/bridge-server && \
-    chmod +x /app/bridge-server
+COPY --from=builder /src/data_plane/tupl_dp/bridge/target/release/bridge-server /app/bridge-server
 
 RUN mkdir -p /app/data /var/hitlogs
 

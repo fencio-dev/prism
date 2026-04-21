@@ -5,10 +5,6 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
-    inputs:
-      prism_version:
-        description: 'Prism version tag to embed in image (e.g. v1.0.1)'
-        required: true
 
 jobs:
   build-push:
@@ -24,25 +20,11 @@ jobs:
             dockerfile: docker/Dockerfile.management-plane
           - service: data-plane
             dockerfile: docker/Dockerfile.data-plane
-          - service: proxy
-            dockerfile: docker/Dockerfile.proxy
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Wait for release assets
-        if: startsWith(github.ref, 'refs/tags/')
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          for i in $(seq 1 20); do
-            if gh release view "${{ github.ref_name }}" --repo ${{ github.repository }} \
-                 --json assets --jq '.assets[].name' 2>/dev/null | grep -q "prism-linux"; then
-              echo "Release assets ready"; exit 0
-            fi
-            echo "Attempt $i: not ready, waiting 30s..."; sleep 30
-          done
-          echo "Timed out waiting for release assets"; exit 1
+      - uses: docker/setup-qemu-action@v3
 
       - uses: docker/setup-buildx-action@v3
 
@@ -67,4 +49,3 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
-          build-args: PRISM_VERSION=${{ github.event_name == 'workflow_dispatch' && github.event.inputs.prism_version || github.ref_name }}

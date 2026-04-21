@@ -75,6 +75,9 @@ struct ConnectionEvaluationPayload {
     source_layer: String,
     destination_agent: String,
     destination_layer: String,
+    policy_mode: String,
+    policy_type: String,
+    policy_effect: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -499,6 +502,21 @@ impl EnforcementEngine {
                     source_layer: connection_match.source_layer,
                     destination_agent: connection_match.destination_agent,
                     destination_layer: connection_match.destination_layer,
+                    policy_mode: payload
+                        .get("policy_mode")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("Enforce")
+                        .to_string(),
+                    policy_type: payload
+                        .get("policy_type")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("context_allow")
+                        .to_string(),
+                    policy_effect: match rule.policy_type() {
+                        PolicyType::Forbidden | PolicyType::ContextDeny => "deny".to_string(),
+                        PolicyType::ContextAllow => "allow".to_string(),
+                        PolicyType::ContextDefer => "defer".to_string(),
+                    },
                 }
             });
             let (deterministic_passed, deterministic_reason, deterministic_results) =
@@ -1332,16 +1350,64 @@ impl EnforcementEngine {
                 details: "No payload_text was provided".to_string(),
             });
         };
-        let Some(patterns) = condition.parameters.get("blocked_patterns").and_then(|v| v.as_array()) else {
-            return Ok(DeterministicConditionResultPayload {
-                condition_type: condition.condition_type.clone(),
-                operator: condition.operator.clone(),
-                passed: false,
-                target_field: Some("payload_text".to_string()),
-                actual_value: Some(json!(content)),
-                expected_value: None,
-                details: "No blocked_patterns were configured".to_string(),
-            });
+        let (patterns, pattern_label, invalid_details) = match condition.operator.as_str() {
+            "not_matches_pattern" => {
+                let Some(patterns) = condition
+                    .parameters
+                    .get("blocked_patterns")
+                    .and_then(|v| v.as_array()) else {
+                    return Ok(DeterministicConditionResultPayload {
+                        condition_type: condition.condition_type.clone(),
+                        operator: condition.operator.clone(),
+                        passed: false,
+                        target_field: Some("payload_text".to_string()),
+                        actual_value: Some(json!(content)),
+                        expected_value: None,
+                        details: "No blocked_patterns were configured".to_string(),
+                    });
+                };
+                (
+                    patterns,
+                    "blocked",
+                    "Payload matched blocked pattern: {}".to_string(),
+                )
+            }
+            "matches_pattern" => {
+                let Some(patterns) = condition
+                    .parameters
+                    .get("allowed_patterns")
+                    .and_then(|v| v.as_array()) else {
+                    return Ok(DeterministicConditionResultPayload {
+                        condition_type: condition.condition_type.clone(),
+                        operator: condition.operator.clone(),
+                        passed: false,
+                        target_field: Some("payload_text".to_string()),
+                        actual_value: Some(json!(content)),
+                        expected_value: None,
+                        details: "No allowed_patterns were configured".to_string(),
+                    });
+                };
+                (
+                    patterns,
+                    "allowed",
+                    "Payload did not match any allowed pattern; closest configured match was: {}"
+                        .to_string(),
+                )
+            }
+            _ => {
+                return Ok(DeterministicConditionResultPayload {
+                    condition_type: condition.condition_type.clone(),
+                    operator: condition.operator.clone(),
+                    passed: false,
+                    target_field: Some("payload_text".to_string()),
+                    actual_value: Some(json!(content)),
+                    expected_value: Some(condition.parameters.clone()),
+                    details: format!(
+                        "Unsupported operator '{}' for regex_pattern",
+                        condition.operator
+                    ),
+                });
+            }
         };
 
         let mut found_match = false;
@@ -1359,13 +1425,31 @@ impl EnforcementEngine {
             }
         }
 
-        let passed = condition.operator == "not_matches_pattern" && !found_match;
+        let passed = match condition.operator.as_str() {
+            "not_matches_pattern" => !found_match,
+            "matches_pattern" => found_match,
+            _ => false,
+        };
         let details = if passed {
-            "No blocked regex patterns matched".to_string()
+            match condition.operator.as_str() {
+                "not_matches_pattern" => "No blocked regex patterns matched".to_string(),
+                "matches_pattern" => {
+                    if let Some(pattern) = matched_pattern.as_ref() {
+                        format!("Payload matched allowed pattern: {}", pattern)
+                    } else {
+                        "Payload matched an allowed regex pattern".to_string()
+                    }
+                }
+                _ => "Regex pattern evaluation passed".to_string(),
+            }
         } else if let Some(pattern) = matched_pattern {
-            format!("Payload matched blocked pattern: {}", pattern)
+            if condition.operator == "not_matches_pattern" {
+                format!("Payload matched blocked pattern: {}", pattern)
+            } else {
+                invalid_details.replacen("{}", &pattern, 1)
+            }
         } else {
-            "Payload matched a blocked regex pattern".to_string()
+            format!("Payload did not satisfy {} regex pattern requirements", pattern_label)
         };
 
         Ok(DeterministicConditionResultPayload {

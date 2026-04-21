@@ -10,16 +10,23 @@ from app.services.db_infra_client import db_infra_client
 logger = logging.getLogger(__name__)
 
 
-def write_call(agent_id: str, request_id: str, action: str, decision: str) -> None:
+def write_call(
+    agent_id: str,
+    call_id: str,
+    action: str,
+    prism_decision: str,
+    enforced_decision: str,
+) -> None:
     try:
         db_infra_client._request_json(
             "POST",
             "/api/v1/prism-management/sessions/write-call",
             payload={
                 "agent_id": agent_id,
-                "request_id": request_id,
+                "call_id": call_id,
                 "action": action,
-                "decision": decision,
+                "prism_decision": prism_decision,
+                "enforced_decision": enforced_decision,
                 "ts": time.time(),
             },
         )
@@ -32,7 +39,8 @@ def insert_call(
     agent_id: str,
     session_id: str | None,
     ts_ms: int,
-    decision: str,
+    prism_decision: str,
+    enforced_decision: str,
     op: str | None,
     t: str | None,
     enforcement_result_json: str,
@@ -48,7 +56,8 @@ def insert_call(
                 "agent_id": agent_id,
                 "session_id": session_id,
                 "ts_ms": ts_ms,
-                "decision": decision,
+                "prism_decision": prism_decision,
+                "enforced_decision": enforced_decision,
                 "op": op,
                 "t": t,
                 "enforcement_result": enforcement_result_json,
@@ -60,16 +69,40 @@ def insert_call(
         logger.error("session_store: insert_call failed: %s", exc, exc_info=True)
 
 
-def update_call_decision(agent_id: str, request_id: str, decision: str) -> None:
+def update_call_decision(
+    agent_id: str,
+    call_id: str,
+    prism_decision: str,
+    enforced_decision: str,
+) -> None:
     try:
         db_infra_client._request_json(
             "PATCH",
             f"/api/v1/prism-management/sessions/{agent_id}/call-decision",
-            payload={"request_id": request_id, "decision": decision},
+            payload={
+                "call_id": call_id,
+                "prism_decision": prism_decision,
+                "enforced_decision": enforced_decision,
+            },
         )
     except Exception as exc:
         logger.error(
             "session_store: update_call_decision failed: %s",
+            exc,
+            exc_info=True,
+        )
+
+
+def update_call_enforced_decision(call_id: str, enforced_decision: str) -> None:
+    try:
+        db_infra_client._request_json(
+            "PATCH",
+            f"/api/v1/prism-management/calls/{call_id}/enforced-decision",
+            payload={"enforced_decision": enforced_decision},
+        )
+    except Exception as exc:
+        logger.error(
+            "session_store: update_call_enforced_decision failed: %s",
             exc,
             exc_info=True,
         )

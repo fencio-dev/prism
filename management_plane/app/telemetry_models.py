@@ -101,7 +101,9 @@ class CallSummary(BaseModel):
         description="Runtime session identifier for grouping calls into runs",
     )
     ts_ms: int = Field(..., description="Unix timestamp in milliseconds")
-    decision: str = Field(..., description="Enforcement decision")
+    decision: str = Field(..., description="Proxy-enforced decision")
+    prism_decision: str = Field(..., description="Raw Prism verdict")
+    enforced_decision: str = Field(..., description="Proxy-enforced decision")
     op: Optional[str] = Field(None, description="Operation type")
     t: Optional[str] = Field(None, description="Tool name or action type")
     is_dry_run: bool = Field(False, description="Whether this was a dry-run call")
@@ -154,7 +156,8 @@ class TelemetryRunSummary(BaseModel):
     modify_count: int = Field(..., description="Count of MODIFY decisions")
     step_up_count: int = Field(..., description="Count of STEP_UP decisions")
     defer_count: int = Field(..., description="Count of DEFER decisions")
-    final_decision: str = Field(..., description="Final decision observed in the run")
+    final_decision: str = Field(..., description="Final proxy-enforced decision observed in the run")
+    prism_final_decision: str = Field(..., description="Final raw Prism verdict observed in the run")
     last_op: Optional[str] = Field(None, description="Latest operation string")
     last_target: Optional[str] = Field(None, description="Latest target string")
     latest_drift_score: float = Field(

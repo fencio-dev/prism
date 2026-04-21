@@ -240,11 +240,19 @@ class DataPlaneClient:
 
     def _convert_response(self, response: EnforceResponse) -> ComparisonResult:
         """Convert gRPC EnforceResponse to ComparisonResult."""
+        def _decode_json_field(raw: str, default):
+            if not raw:
+                return default
+            try:
+                return json.loads(raw)
+            except Exception:
+                return default
+
         evidence = [
             BoundaryEvidence(
                 boundary_id=ev.rule_id,
                 boundary_name=ev.rule_name,
-                effect="deny" if ev.decision == 0 else "allow",
+                effect=("deny" if ev.decision == 0 else "allow"),
                 decision=ev.decision,
                 similarities=list(ev.similarities),
                 triggering_slice=ev.triggering_slice,
@@ -252,20 +260,25 @@ class DataPlaneClient:
                 thresholds=list(ev.thresholds) if ev.thresholds else [0.0, 0.0, 0.0, 0.0],
                 scoring_mode=ev.scoring_mode,
                 evaluation_mode=ev.evaluation_mode or "semantic",
-                connection_result=(
-                    json.loads(ev.connection_result_json)
-                    if getattr(ev, "connection_result_json", "")
-                    else None
+                policy_mode=(
+                    (_decode_json_field(getattr(ev, "connection_result_json", ""), {}) or {})
+                    .get("policy_mode", "Enforce")
                 ),
-                deterministic_results=(
-                    json.loads(ev.deterministic_results_json)
-                    if getattr(ev, "deterministic_results_json", "")
-                    else []
+                policy_type=(
+                    (_decode_json_field(getattr(ev, "connection_result_json", ""), {}) or {})
+                    .get("policy_type")
                 ),
-                semantic_results=(
-                    json.loads(ev.semantic_results_json)
-                    if getattr(ev, "semantic_results_json", "")
-                    else []
+                connection_result=_decode_json_field(
+                    getattr(ev, "connection_result_json", ""),
+                    None,
+                ),
+                deterministic_results=_decode_json_field(
+                    getattr(ev, "deterministic_results_json", ""),
+                    [],
+                ),
+                semantic_results=_decode_json_field(
+                    getattr(ev, "semantic_results_json", ""),
+                    [],
                 ),
             )
             for ev in response.evidence

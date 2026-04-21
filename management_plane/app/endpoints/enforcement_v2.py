@@ -89,7 +89,6 @@ def get_data_plane_client():
 def _persist_enforcement_record(
     *,
     agent_id: str,
-    request_id: str,
     event: IntentEvent,
     enforcement_response: EnforcementResponse,
     decision_name: str,
@@ -100,7 +99,12 @@ def _persist_enforcement_record(
     Persist enforcement output for telemetry and session history.
     """
     try:
-        session_store.update_call_decision(agent_id, request_id, decision_name)
+        session_store.update_call_decision(
+            agent_id,
+            event.id,
+            decision_name,
+            decision_name,
+        )
     except Exception as exc:
         logger.error("session_store update_call_decision failed: %s", exc)
 
@@ -110,7 +114,8 @@ def _persist_enforcement_record(
             agent_id=agent_id,
             session_id=session_id,
             ts_ms=int(event.ts * 1000),
-            decision=decision_name,
+            prism_decision=decision_name,
+            enforced_decision=decision_name,
             op=event.op,
             t=event.t,
             enforcement_result_json=json.dumps(
@@ -192,7 +197,7 @@ async def enforce_v2(
     action = event.op or ""
 
     try:
-        session_store.write_call(agent_id, request_id, action, "pending")
+        session_store.write_call(agent_id, event.id, action, "PENDING", "PENDING")
     except Exception as exc:
         logger.error("session_store write_call failed: %s", exc)
 
@@ -237,7 +242,16 @@ async def enforce_v2(
                         thresholds=[0.0, 0.0, 0.0, 0.0],
                         scoring_mode="min",
                         evaluation_mode="network",
-                        connection_result=None,
+                        policy_mode=network_result.mode,
+                        policy_type="network",
+                        connection_result={
+                            "matched": True,
+                            "policy_mode": network_result.mode,
+                            "policy_type": "network",
+                            "policy_effect": "deny",
+                            "matched_rule": network_result.matched_rule,
+                            "reason": network_result.reason,
+                        },
                         deterministic_results=[],
                     )
 
@@ -254,7 +268,6 @@ async def enforce_v2(
                     )
                     _persist_enforcement_record(
                         agent_id=agent_id,
-                        request_id=request_id,
                         event=event,
                         enforcement_response=enforcement_response,
                         decision_name="DENY",
@@ -360,7 +373,6 @@ async def enforce_v2(
         )
         _persist_enforcement_record(
             agent_id=agent_id,
-            request_id=request_id,
             event=event,
             enforcement_response=enforcement_response,
             decision_name=decision_name,

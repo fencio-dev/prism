@@ -72,6 +72,7 @@ class PolicyConverter:
         params["boundary_id"] = PolicyConverter._string_param(boundary.id)
         params["boundary_name"] = PolicyConverter._string_param(boundary.name)
         params["boundary_status"] = PolicyConverter._string_param(boundary.status)
+        params["policy_mode"] = PolicyConverter._string_param(boundary.mode)
         params["policy_type"] = PolicyConverter._string_param(boundary.policy_type)
         params["rule_decision"] = PolicyConverter._string_param(boundary.scoring_mode)
         params["priority"] = PolicyConverter._float_param(float(boundary.priority))
