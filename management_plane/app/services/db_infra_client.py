@@ -53,6 +53,12 @@ class DbInfraClient:
             return {}
         return response.json()
 
+    def get_module_enablement(self, module_name: str) -> dict[str, Any]:
+        return self._request_json(
+            "GET",
+            f"/api/v1/platform/module-enablement/{module_name}",
+        )
+
 
 db_infra_client = DbInfraClient(
     config.DB_INFRA_BASE_URL,

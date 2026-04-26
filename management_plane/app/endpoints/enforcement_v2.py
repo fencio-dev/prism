@@ -35,6 +35,7 @@ from app.services import (
     PolicyEncoder,
 )
 from app.services import session_store
+from app.services.db_infra_client import DbInfraClientError, db_infra_client
 from app.services.policies import list_policy_records
 
 logger = logging.getLogger(__name__)
@@ -164,6 +165,23 @@ async def enforce_v2(
         HTTPException: On encoding, enforcement, or service errors
     """
     request_id = str(uuid.uuid4())
+
+    try:
+        prism_enablement = db_infra_client.get_module_enablement("prism")
+        if not prism_enablement.get("enabled", False):
+            logger.info("Prism disabled. Allowing request %s without enforcement.", request_id)
+            return EnforcementResponse(
+                decision="ALLOW",
+                modified_params=None,
+                drift_score=0.0,
+                drift_triggered=False,
+                slice_similarities=[1.0, 1.0, 1.0, 1.0],
+                evidence=[],
+                evaluation_mode="unknown",
+                reason="Prism disabled",
+            )
+    except DbInfraClientError as exc:
+        logger.warning("Failed to read Prism enablement, continuing enforcement: %s", exc)
 
     # Set tenant_id
     event.tenant_id = current_user.id
