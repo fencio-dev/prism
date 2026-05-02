@@ -30,12 +30,6 @@ WORKDIR /app
 
 RUN set -eux; \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/*; \
-    if [ -f /etc/apt/sources.list ]; then \
-      sed -i 's|http://deb.debian.org|https://deb.debian.org|g; s|http://security.debian.org|https://security.debian.org|g' /etc/apt/sources.list; \
-    fi; \
-    if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
-      sed -i 's|http://deb.debian.org|https://deb.debian.org|g; s|http://security.debian.org|https://security.debian.org|g' /etc/apt/sources.list.d/debian.sources; \
-    fi; \
     apt-get update && \
     apt-get install -y --no-install-recommends \
     ca-certificates \
