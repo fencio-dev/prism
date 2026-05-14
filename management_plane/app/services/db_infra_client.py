@@ -59,6 +59,38 @@ class DbInfraClient:
             f"/api/v1/platform/module-enablement/{module_name}",
         )
 
+    def validate_runtime_credential(self, api_key: str) -> dict[str, Any]:
+        return self._request_json(
+            "POST",
+            "/api/v1/prism-management/runtime-auth/validate",
+            payload={"api_key": api_key},
+        )
+
+    def resolve_runtime_agent(
+        self,
+        *,
+        tenant_id: str,
+        integration_type: str,
+        runtime_instance_id: str | None,
+        integration_agent_ref: str | None,
+        endpoint_fingerprint: str | None,
+        display_name: str | None,
+        metadata: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self._request_json(
+            "POST",
+            "/api/v1/prism-management/runtime-agent/resolve",
+            payload={
+                "tenant_id": tenant_id,
+                "integration_type": integration_type,
+                "runtime_instance_id": runtime_instance_id,
+                "integration_agent_ref": integration_agent_ref,
+                "endpoint_fingerprint": endpoint_fingerprint,
+                "display_name": display_name,
+                "metadata": metadata,
+            },
+        )
+
 
 db_infra_client = DbInfraClient(
     config.DB_INFRA_BASE_URL,

@@ -14,8 +14,8 @@ from typing import Literal, Optional
 # ============================================================================
 
 class AgentIdentity(BaseModel):
-    agent_id: str
-    principal_id: str
+    agent_id: str = ""
+    principal_id: str = ""
     actor_type: Literal["user", "service", "llm", "agent"]
     service_account: Optional[str] = None
     role_scope: Optional[str] = None
@@ -125,6 +125,11 @@ class IntentEvent(BaseModel):
         default=None,
         description="Optional Prism rule IDs to evaluate exclusively during dry runs"
     )
+    integration_type: Optional[str] = None
+    runtime_instance_id: Optional[str] = None
+    integration_agent_ref: Optional[str] = None
+    endpoint_fingerprint: Optional[str] = None
+    runtime_identity: Optional[dict] = None
 
 
 # ============================================================================

@@ -79,9 +79,10 @@ async def get_current_tenant(
     supabase_service_key = os.getenv("SUPABASE_SERVICE_KEY")
 
     if not supabase_url and not supabase_jwt_secret and not supabase_service_key:
+        local_tenant_id = os.getenv("TENANT_ID", "local-dev-user").strip() or "local-dev-user"
         logger.warning("Running in LOCAL DEV MODE - authentication bypassed (Supabase not configured)")
         return User(
-            id="local-dev-user",
+            id=local_tenant_id,
             aud="local-dev",
             role="authenticated",
             email="dev@localhost",

@@ -19,9 +19,9 @@ import uuid
 from functools import lru_cache
 from typing import Optional, Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Header, HTTPException, Request, status
 
-from app.auth import User, get_current_tenant
+from app.auth import User, get_current_user_from_headers
 from app.models import (
     BoundaryEvidence,
     ComparisonResult,
@@ -41,6 +41,152 @@ from app.services.policies import list_policy_records
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="", tags=["enforcement-v2"])
+
+
+def _extract_bearer_token(value: str | None) -> str | None:
+    if not value:
+        return None
+    parts = value.strip().split(" ", 1)
+    if len(parts) == 2 and parts[0].lower() == "bearer":
+        return parts[1].strip() or None
+    return value.strip() or None
+
+
+def _runtime_identity_value(event: IntentEvent, key: str) -> str | None:
+    direct = getattr(event, key, None)
+    if isinstance(direct, str) and direct.strip():
+        return direct.strip()
+    runtime_identity = event.runtime_identity
+    if isinstance(runtime_identity, dict):
+        value = runtime_identity.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    params = event.params
+    if isinstance(params, dict):
+        value = params.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _canonicalize_event_agent(event: IntentEvent, platform_agent_id: str, tenant_id: str) -> None:
+    event.tenant_id = tenant_id
+    event.identity.agent_id = platform_agent_id
+    if not event.identity.principal_id:
+        event.identity.principal_id = event.id
+    if not event.source_agent:
+        event.source_agent = platform_agent_id
+    if not event.destination_agent:
+        event.destination_agent = platform_agent_id
+    if event.source_agent != platform_agent_id:
+        event.source_agent = platform_agent_id
+    if event.destination_agent != platform_agent_id:
+        event.destination_agent = platform_agent_id
+
+
+async def _resolve_current_user_and_agent(
+    *,
+    event: IntentEvent,
+    authorization: str | None,
+    x_fencio_api_key: str | None,
+    x_prism_api_key: str | None,
+    x_tenant_id: str | None,
+    x_user_id: str | None,
+    x_prism_integration_type: str | None,
+    x_prism_runtime_instance_id: str | None,
+    x_prism_integration_agent_ref: str | None,
+    x_prism_endpoint_fingerprint: str | None,
+) -> tuple[User, str]:
+    api_key = (
+        _extract_bearer_token(authorization)
+        or _extract_bearer_token(x_fencio_api_key)
+        or _extract_bearer_token(x_prism_api_key)
+    )
+    if not api_key:
+        current_user = get_current_user_from_headers(x_tenant_id, x_user_id)
+        agent_id = event.identity.agent_id or ""
+        event.tenant_id = current_user.id
+        return current_user, agent_id
+
+    try:
+        runtime_auth = db_infra_client.validate_runtime_credential(api_key)
+    except DbInfraClientError as exc:
+        logger.warning("Runtime credential validation failed: %s", exc)
+        raise HTTPException(status_code=401, detail="invalid_runtime_key") from exc
+
+    tenant_id = str(runtime_auth.get("tenant_id") or "").strip()
+    if not tenant_id:
+        raise HTTPException(status_code=401, detail="runtime_key_missing_tenant")
+
+    integration_type = (
+        x_prism_integration_type
+        or _runtime_identity_value(event, "integration_type")
+        or "unknown"
+    )
+    runtime_instance_id = (
+        x_prism_runtime_instance_id
+        or _runtime_identity_value(event, "runtime_instance_id")
+    )
+    integration_agent_ref = (
+        x_prism_integration_agent_ref
+        or _runtime_identity_value(event, "integration_agent_ref")
+    )
+    endpoint_fingerprint = (
+        x_prism_endpoint_fingerprint
+        or _runtime_identity_value(event, "endpoint_fingerprint")
+    )
+    metadata = {
+        "event_id": event.id,
+        "operation": event.op,
+        "source_layer": event.source_layer,
+        "destination_layer": event.destination_layer,
+        "runtime_identity": event.runtime_identity or {},
+    }
+
+    try:
+        resolution = db_infra_client.resolve_runtime_agent(
+            tenant_id=tenant_id,
+            integration_type=integration_type,
+            runtime_instance_id=runtime_instance_id,
+            integration_agent_ref=integration_agent_ref,
+            endpoint_fingerprint=endpoint_fingerprint,
+            display_name=integration_agent_ref or runtime_instance_id,
+            metadata=metadata,
+        )
+    except DbInfraClientError as exc:
+        logger.error("Runtime agent resolution failed: %s", exc)
+        raise HTTPException(status_code=502, detail="runtime_agent_resolution_failed") from exc
+
+    status_value = str(resolution.get("status") or "")
+    platform_agent_id = str(resolution.get("platform_agent_id") or "").strip()
+    if status_value == "resolved" and platform_agent_id:
+        _canonicalize_event_agent(event, platform_agent_id, tenant_id)
+        return (
+            User(
+                id=tenant_id,
+                aud="runtime-workspace-key",
+                role="runtime",
+                email=None,
+            ),
+            platform_agent_id,
+        )
+    if status_value == "ambiguous":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "agent_identity_ambiguous",
+                "reason": resolution.get("reason"),
+                "binding": resolution.get("binding"),
+            },
+        )
+    raise HTTPException(
+        status_code=403,
+        detail={
+            "code": "agent_identity_unresolved",
+            "reason": resolution.get("reason"),
+            "binding": resolution.get("binding"),
+        },
+    )
 
 
 # ============================================================================
@@ -137,8 +283,17 @@ def _persist_enforcement_record(
 @router.post("/enforce", response_model=EnforcementResponse, status_code=status.HTTP_200_OK)
 async def enforce_v2(
     event: IntentEvent,
-    current_user: User = Depends(get_current_tenant),
+    request: Request,
     dry_run: bool = False,
+    authorization: str | None = Header(default=None),
+    x_fencio_api_key: str | None = Header(default=None),
+    x_prism_api_key: str | None = Header(default=None),
+    x_tenant_id: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_prism_integration_type: str | None = Header(default=None),
+    x_prism_runtime_instance_id: str | None = Header(default=None),
+    x_prism_integration_agent_ref: str | None = Header(default=None),
+    x_prism_endpoint_fingerprint: str | None = Header(default=None),
 ) -> EnforcementResponse:
     """
     Enforce intent against active policies.
@@ -165,6 +320,7 @@ async def enforce_v2(
         HTTPException: On encoding, enforcement, or service errors
     """
     request_id = str(uuid.uuid4())
+    _ = request
 
     try:
         prism_enablement = db_infra_client.get_module_enablement("prism")
@@ -183,14 +339,18 @@ async def enforce_v2(
     except DbInfraClientError as exc:
         logger.warning("Failed to read Prism enablement, continuing enforcement: %s", exc)
 
-    # Set tenant_id
-    event.tenant_id = current_user.id
-
-    # Step 2: Extract agent_id from identity.agent_id
-    try:
-        agent_id = event.identity.agent_id or ""
-    except Exception:
-        agent_id = ""
+    current_user, agent_id = await _resolve_current_user_and_agent(
+        event=event,
+        authorization=authorization,
+        x_fencio_api_key=x_fencio_api_key,
+        x_prism_api_key=x_prism_api_key,
+        x_tenant_id=x_tenant_id,
+        x_user_id=x_user_id,
+        x_prism_integration_type=x_prism_integration_type,
+        x_prism_runtime_instance_id=x_prism_runtime_instance_id,
+        x_prism_integration_agent_ref=x_prism_integration_agent_ref,
+        x_prism_endpoint_fingerprint=x_prism_endpoint_fingerprint,
+    )
 
     logger.info(
         "V2 enforce request: %s, op=%s, t=%s, agent_id=%s, "
