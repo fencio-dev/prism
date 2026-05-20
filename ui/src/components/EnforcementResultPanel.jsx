@@ -311,7 +311,7 @@ export default function EnforcementResultPanel({ result, policies, showTopDivide
 
       <div style={styles.summaryRow}>
         <div style={styles.summaryItem}>
-          <span style={styles.summaryLabel}>Drift Score</span>
+          <span style={styles.summaryLabel}>Policy Drift Score</span>
           <span style={styles.summaryValue}>
             {drift_score != null ? drift_score.toFixed(4) : '—'}
           </span>

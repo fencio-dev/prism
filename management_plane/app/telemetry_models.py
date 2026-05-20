@@ -162,7 +162,15 @@ class TelemetryRunSummary(BaseModel):
     last_target: Optional[str] = Field(None, description="Latest target string")
     latest_drift_score: float = Field(
         0.0,
-        description="Latest drift score seen in the run",
+        description="Latest policy-relative drift score seen in the run",
+    )
+    latest_baseline_drift_score: Optional[float] = Field(
+        None,
+        description="Latest legacy session-baseline drift score seen in the run",
+    )
+    drift_source: str = Field(
+        "policy",
+        description="Source of the latest_drift_score value",
     )
 
 

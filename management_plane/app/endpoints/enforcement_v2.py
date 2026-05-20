@@ -35,6 +35,7 @@ from app.services import (
     PolicyEncoder,
 )
 from app.services import session_store
+from app.services.data_intel_client import emit_enforcement_completed
 from app.services.db_infra_client import DbInfraClientError, db_infra_client
 from app.services.policies import list_policy_records
 
@@ -274,6 +275,18 @@ def _persist_enforcement_record(
     except Exception as exc:
         logger.error("session_store insert_call failed: %s", exc)
 
+    try:
+        emit_enforcement_completed(
+            agent_id=agent_id,
+            event=event,
+            enforcement_response=enforcement_response,
+            decision_name=decision_name,
+            dry_run=dry_run,
+            session_id=session_id,
+        )
+    except Exception as exc:
+        logger.error("data_intel enforcement emit failed: %s", exc)
+
 
 # ============================================================================
 # V2 Endpoints
@@ -305,7 +318,7 @@ async def enforce_v2(
     4. Ensure session row exists (write_call with decision="pending")
     5. Initialize baseline vector if first call for this agent
     6. Compute drift BEFORE gRPC call
-    7. Call gRPC enforce with drift_score and session_id
+    7. Call gRPC enforce with session-baseline drift and namespace
     8. Derive decision_name from result
     9. Return EnforcementResponse
 
@@ -330,6 +343,8 @@ async def enforce_v2(
                 decision="ALLOW",
                 modified_params=None,
                 drift_score=0.0,
+                baseline_drift_score=None,
+                drift_source="none",
                 drift_triggered=False,
                 slice_similarities=[1.0, 1.0, 1.0, 1.0],
                 evidence=[],
@@ -438,6 +453,8 @@ async def enforce_v2(
                         decision="DENY",
                         modified_params=None,
                         drift_score=0.0,
+                        baseline_drift_score=None,
+                        drift_source="none",
                         drift_triggered=False,
                         slice_similarities=[0.0, 0.0, 0.0, 0.0],
                         evidence=[network_evidence],
@@ -493,15 +510,16 @@ async def enforce_v2(
             except Exception as exc:
                 logger.error("session_store initialize_session_vector failed: %s", exc)
 
-        # Step 6: Compute drift BEFORE gRPC
+        # Step 6: Compute legacy session-baseline drift before gRPC.
+        # Rust returns the policy-relative drift that is used for enforcement.
         if agent_id:
             try:
-                drift_score = session_store.compute_and_update_drift(agent_id, current_vector)
+                baseline_drift_score = session_store.compute_and_update_drift(agent_id, current_vector)
             except Exception as exc:
                 logger.error("session_store compute_and_update_drift failed: %s", exc)
-                drift_score = 0.0
+                baseline_drift_score = 0.0
         else:
-            drift_score = 0.0
+            baseline_drift_score = 0.0
 
         # Step 7: Call gRPC enforce
         # Determine which policy namespace to enforce against:
@@ -519,7 +537,7 @@ async def enforce_v2(
                 event,
                 current_vector,
                 request_id,
-                drift_score,
+                baseline_drift_score,
                 enforce_namespace,
             )
         except Exception as e:
@@ -538,11 +556,19 @@ async def enforce_v2(
         else:
             decision_name = "ALLOW" if result.decision == 1 else "DENY"
 
+        policy_drift_score = (
+            result.policy_drift_score
+            if result.policy_drift_score is not None
+            else baseline_drift_score
+        )
+
         # Step 9: Build and persist EnforcementResponse, then return it
         enforcement_response = EnforcementResponse(
             decision=decision_name,
             modified_params=result.modified_params,
-            drift_score=drift_score,
+            drift_score=policy_drift_score,
+            baseline_drift_score=baseline_drift_score,
+            drift_source="policy" if result.policy_drift_score is not None else "session_baseline",
             drift_triggered=result.drift_triggered,
             slice_similarities=result.slice_similarities,
             evidence=result.evidence,

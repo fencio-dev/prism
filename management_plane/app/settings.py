@@ -60,6 +60,20 @@ class Config:
         os.getenv("DB_INFRA_TIMEOUT_SECONDS", "5.0")
     )
 
+    # Shared data intelligence layer configuration
+    DATA_INTEL_ENABLED: bool = os.getenv("DATA_INTEL_ENABLED", "true").lower() == "true"
+    DATA_INTEL_BASE_URL: str = os.getenv("DATA_INTEL_BASE_URL", "http://localhost:8030")
+    DATA_INTEL_TIMEOUT_SECONDS: float = float(
+        os.getenv("DATA_INTEL_TIMEOUT_SECONDS", "2.0")
+    )
+    DATA_INTEL_SCHEMA_VERSION: str = os.getenv(
+        "DATA_INTEL_SCHEMA_VERSION",
+        "prism-intel-v1",
+    )
+    DATA_INTEL_FALLBACK_OUTBOX: bool = (
+        os.getenv("DATA_INTEL_FALLBACK_OUTBOX", "true").lower() == "true"
+    )
+
     # Data Plane Configuration
     data_plane_url: str = os.getenv("DATA_PLANE_URL", f"localhost:{os.getenv('DATA_PLANE_PORT', '50051')}")
 

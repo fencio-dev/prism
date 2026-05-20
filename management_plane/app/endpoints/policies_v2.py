@@ -24,6 +24,7 @@ from app.models import (
 )
 from app.services import DataPlaneClient, DataPlaneError
 from app.chroma_client import delete_tenant_collection, fetch_rule_payload, upsert_rule_payload
+from app.services.data_intel_client import emit_policy_deleted, emit_policy_event
 from app.services.policies import (
     build_anchor_payload,
     create_policy_record,
@@ -129,21 +130,59 @@ def _persist_anchor_payload(
     return rule_vector
 
 
-def _install_to_dataplane(boundary: DesignBoundary, rule_vector: "RuleVector") -> None:
+def _install_to_dataplane(boundary: DesignBoundary, rule_vector: "RuleVector") -> bool:
     client = get_data_plane_client()
     try:
         client.install_policies([boundary], [rule_vector])
         logger.info("Installed policy %s into data plane", boundary.id)
+        return True
     except DataPlaneError as exc:
         logger.warning(
             "Data plane install failed for policy %s (startup sync is recovery path): %s",
             boundary.id, exc,
         )
+        return False
     except Exception as exc:
         logger.warning(
             "Unexpected error installing policy %s to data plane: %s",
             boundary.id, exc,
         )
+        return False
+
+
+def _emit_policy_upsert_intel_events(
+    *,
+    tenant_id: str,
+    boundary: DesignBoundary,
+    rule_vector: "RuleVector",
+    installed: bool,
+) -> None:
+    try:
+        emit_policy_event(
+            event_type="prism.policy.upserted",
+            tenant_id=tenant_id,
+            boundary=boundary,
+        )
+        emit_policy_event(
+            event_type="prism.policy.anchors.encoded",
+            tenant_id=tenant_id,
+            boundary=boundary,
+            payload_extra={
+                "anchor_counts": dict(rule_vector.anchor_counts),
+                "embedding_profile_id": os.getenv(
+                    "PRISM_EMBEDDING_PROFILE_ID",
+                    "redis-langcache-embed-v3-small-rp-v1",
+                ),
+            },
+        )
+        if installed:
+            emit_policy_event(
+                event_type="prism.policy.installed",
+                tenant_id=tenant_id,
+                boundary=boundary,
+            )
+    except Exception as exc:
+        logger.error("data_intel policy emit failed for %s: %s", boundary.id, exc)
 
 
 def _load_rule_vector_from_payload(tenant_id: str, policy_id: str) -> "RuleVector":
@@ -187,7 +226,13 @@ async def create_policy(
         delete_policy_record(current_user.id, boundary.id)
         raise
 
-    _install_to_dataplane(boundary, rule_vector)
+    installed = _install_to_dataplane(boundary, rule_vector)
+    _emit_policy_upsert_intel_events(
+        tenant_id=current_user.id,
+        boundary=boundary,
+        rule_vector=rule_vector,
+        installed=installed,
+    )
 
     _write_policy_audit({
         "ts": now,
@@ -242,7 +287,13 @@ async def update_policy(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     rule_vector = _persist_anchor_payload(current_user.id, boundary)
-    _install_to_dataplane(boundary, rule_vector)
+    installed = _install_to_dataplane(boundary, rule_vector)
+    _emit_policy_upsert_intel_events(
+        tenant_id=current_user.id,
+        boundary=boundary,
+        rule_vector=rule_vector,
+        installed=installed,
+    )
     _write_policy_audit({
         "ts": now,
         "request_id": request_id,
@@ -305,7 +356,13 @@ async def update_policy_mode(
     except HTTPException:
         raise
 
-    _install_to_dataplane(updated, rule_vector)
+    installed = _install_to_dataplane(updated, rule_vector)
+    _emit_policy_upsert_intel_events(
+        tenant_id=current_user.id,
+        boundary=updated,
+        rule_vector=rule_vector,
+        installed=installed,
+    )
 
     _write_policy_audit({
         "ts": now,
@@ -337,7 +394,13 @@ async def toggle_policy_status(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     rule_vector = _persist_anchor_payload(current_user.id, updated)
-    _install_to_dataplane(updated, rule_vector)
+    installed = _install_to_dataplane(updated, rule_vector)
+    _emit_policy_upsert_intel_events(
+        tenant_id=current_user.id,
+        boundary=updated,
+        rule_vector=rule_vector,
+        installed=installed,
+    )
 
     _write_policy_audit({
         "ts": now,
@@ -386,6 +449,12 @@ async def delete_policy(
     except Exception as exc:
         raise HTTPException(status_code=500, detail="Policy payload deletion failed") from exc
 
+    emit_policy_deleted(
+        tenant_id=current_user.id,
+        policy_id=policy_id,
+        agent_id=policy.agent_id,
+    )
+
     _write_policy_audit({
         "ts": time.time(),
         "request_id": request_id,
@@ -409,6 +478,7 @@ async def clear_all_policies(
     """Remove every policy for the authenticated tenant across all three stores."""
     request_id = str(uuid.uuid4())
     client = get_data_plane_client()
+    policies_before_delete = list_policy_records(current_user.id)
 
     # 1. Evict all rules from the Data Plane (cold_storage)
     try:
@@ -437,6 +507,12 @@ async def clear_all_policies(
         "tenant_id": current_user.id,
         "result": "ok",
     })
+    for policy in policies_before_delete:
+        emit_policy_deleted(
+            tenant_id=current_user.id,
+            policy_id=policy.id,
+            agent_id=policy.agent_id,
+        )
     return PolicyClearResponse(
         success=True,
         policies_deleted=policies_deleted,

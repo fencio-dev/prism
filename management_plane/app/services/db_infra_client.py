@@ -91,6 +91,33 @@ class DbInfraClient:
             },
         )
 
+    def enqueue_intel_outbox_event(
+        self,
+        *,
+        event_id: str,
+        tenant_id: str,
+        agent_id: str,
+        event_type: str,
+        aggregate_type: str,
+        aggregate_id: str,
+        payload: dict[str, Any],
+        next_retry_at_ms: int | None = None,
+    ) -> dict[str, Any]:
+        return self._request_json(
+            "POST",
+            "/api/v1/intel/outbox",
+            payload={
+                "id": event_id,
+                "tenant_id": tenant_id,
+                "agent_id": agent_id,
+                "event_type": event_type,
+                "aggregate_type": aggregate_type,
+                "aggregate_id": aggregate_id,
+                "payload": payload,
+                "next_retry_at_ms": next_retry_at_ms,
+            },
+        )
+
 
 db_infra_client = DbInfraClient(
     config.DB_INFRA_BASE_URL,

@@ -248,41 +248,53 @@ class DataPlaneClient:
             except Exception:
                 return default
 
-        evidence = [
-            BoundaryEvidence(
-                boundary_id=ev.rule_id,
-                boundary_name=ev.rule_name,
-                effect=("deny" if ev.decision == 0 else "allow"),
-                decision=ev.decision,
-                similarities=list(ev.similarities),
-                triggering_slice=ev.triggering_slice,
-                anchor_matched=ev.anchor_matched,
-                thresholds=list(ev.thresholds) if ev.thresholds else [0.0, 0.0, 0.0, 0.0],
-                scoring_mode=ev.scoring_mode,
-                evaluation_mode=ev.evaluation_mode or "semantic",
-                policy_mode=(
-                    (_decode_json_field(getattr(ev, "connection_result_json", ""), {}) or {})
-                    .get("policy_mode", "Enforce")
-                ),
-                policy_type=(
-                    (_decode_json_field(getattr(ev, "connection_result_json", ""), {}) or {})
-                    .get("policy_type")
-                ),
-                connection_result=_decode_json_field(
-                    getattr(ev, "connection_result_json", ""),
-                    None,
-                ),
-                deterministic_results=_decode_json_field(
-                    getattr(ev, "deterministic_results_json", ""),
-                    [],
-                ),
-                semantic_results=_decode_json_field(
-                    getattr(ev, "semantic_results_json", ""),
-                    [],
-                ),
+        evidence = []
+        policy_drift_scores = []
+        policy_similarity_scores = []
+        baseline_drift_scores = []
+
+        for ev in response.evidence:
+            connection_result = _decode_json_field(
+                getattr(ev, "connection_result_json", ""),
+                None,
             )
-            for ev in response.evidence
-        ]
+            connection_result_dict = connection_result if isinstance(connection_result, dict) else {}
+            if isinstance(connection_result, dict):
+                policy_drift = connection_result.get("policy_drift_score")
+                policy_similarity = connection_result.get("policy_similarity_score")
+                baseline_drift = connection_result.get("baseline_drift_score")
+                if isinstance(policy_drift, (int, float)):
+                    policy_drift_scores.append(float(policy_drift))
+                if isinstance(policy_similarity, (int, float)):
+                    policy_similarity_scores.append(float(policy_similarity))
+                if isinstance(baseline_drift, (int, float)):
+                    baseline_drift_scores.append(float(baseline_drift))
+
+            evidence.append(
+                BoundaryEvidence(
+                    boundary_id=ev.rule_id,
+                    boundary_name=ev.rule_name,
+                    effect=("deny" if ev.decision == 0 else "allow"),
+                    decision=ev.decision,
+                    similarities=list(ev.similarities),
+                    triggering_slice=ev.triggering_slice,
+                    anchor_matched=ev.anchor_matched,
+                    thresholds=list(ev.thresholds) if ev.thresholds else [0.0, 0.0, 0.0, 0.0],
+                    scoring_mode=ev.scoring_mode,
+                    evaluation_mode=ev.evaluation_mode or "semantic",
+                    policy_mode=connection_result_dict.get("policy_mode", "Enforce"),
+                    policy_type=connection_result_dict.get("policy_type"),
+                    connection_result=connection_result,
+                    deterministic_results=_decode_json_field(
+                        getattr(ev, "deterministic_results_json", ""),
+                        [],
+                    ),
+                    semantic_results=_decode_json_field(
+                        getattr(ev, "semantic_results_json", ""),
+                        [],
+                    ),
+                )
+            )
 
         return ComparisonResult(
             decision=response.decision,
@@ -293,6 +305,9 @@ class DataPlaneClient:
             decision_name=response.decision_name,
             modified_params=json.loads(response.modified_params) if response.modified_params else None,
             drift_triggered=response.drift_triggered,
+            policy_drift_score=min(policy_drift_scores) if policy_drift_scores else None,
+            policy_similarity_score=max(policy_similarity_scores) if policy_similarity_scores else None,
+            baseline_drift_score=baseline_drift_scores[-1] if baseline_drift_scores else None,
             evaluation_mode=response.evaluation_mode or "unknown",
             reason=response.reason or None,
         )

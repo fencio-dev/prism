@@ -478,10 +478,10 @@ impl EnforcementEngine {
         }
 
         // Helper closure: evaluate a single rule vector comparison and record telemetry.
-        // Returns (ComparisonResult, rule_vector) or an Err.
+        // Returns (ComparisonResult, rule_vector, policy_drift_score) or an Err.
         let evaluate_rule = |rule: &Arc<dyn RuleInstance>,
                              evidence: &mut Vec<RuleEvidence>|
-         -> Result<(ComparisonResult, RuleVector), String> {
+         -> Result<(ComparisonResult, RuleVector, f32), String> {
             if let (Some(ref telemetry), Some(ref sid)) = (&self.telemetry, &session_id) {
                 telemetry.with_session(sid, |session| {
                     session.add_event(SessionEvent::RuleEvaluationStarted {
@@ -595,6 +595,9 @@ impl EnforcementEngine {
                 )
             };
             let cmp = cmp;
+            let policy_similarity_score =
+                Self::policy_similarity_score(&cmp, &rule_vector, ev_decision_mode, weights);
+            let policy_drift_score = (1.0 - policy_similarity_score).clamp(0.0, 1.0);
             let rule_eval_duration = 0u64; // timing not re-measured in closure for simplicity
 
             let slice_names = ["action", "resource", "data", "risk"];
@@ -621,6 +624,20 @@ impl EnforcementEngine {
                 deterministic_reason.clone()
             };
 
+            let mut connection_result_value = connection_result
+                .as_ref()
+                .and_then(|value| serde_json::to_value(value).ok())
+                .unwrap_or_else(|| json!({}));
+            if let Some(map) = connection_result_value.as_object_mut() {
+                map.insert("policy_drift_score".to_string(), json!(policy_drift_score));
+                map.insert(
+                    "policy_similarity_score".to_string(),
+                    json!(policy_similarity_score),
+                );
+                map.insert("baseline_drift_score".to_string(), json!(drift_score));
+                map.insert("drift_source".to_string(), json!("policy"));
+            }
+
             evidence.push(RuleEvidence {
                 rule_id: rule.rule_id().to_string(),
                 rule_name: rule.description().unwrap_or("").to_string(),
@@ -631,9 +648,7 @@ impl EnforcementEngine {
                 thresholds: ev_thresholds,
                 scoring_mode,
                 evaluation_mode,
-                connection_result_json: connection_result
-                    .as_ref()
-                    .map(|value| serde_json::to_string(value).unwrap_or_default())
+                connection_result_json: serde_json::to_string(&connection_result_value)
                     .unwrap_or_default(),
                 deterministic_results_json: serde_json::to_string(&deterministic_results)
                     .unwrap_or_else(|_| "[]".to_string()),
@@ -680,7 +695,7 @@ impl EnforcementEngine {
                 });
             }
 
-            Ok((cmp, rule_vector))
+            Ok((cmp, rule_vector, policy_drift_score))
         };
 
         // Helper: record final decision in telemetry and return EnforcementResult.
@@ -704,7 +719,7 @@ impl EnforcementEngine {
             let reason = match enforcement_decision.decision {
                 Decision::Allow => "Matched an allow policy.".to_string(),
                 Decision::Modify => "Matched an allow policy with parameter modification.".to_string(),
-                Decision::StepUp => "Matched an allow policy, but drift exceeded the configured threshold.".to_string(),
+                Decision::StepUp => "Matched an allow policy, but policy drift exceeded the configured threshold.".to_string(),
                 Decision::Defer => "Matched a defer policy.".to_string(),
                 Decision::Deny => {
                     if evidence.is_empty() {
@@ -746,7 +761,7 @@ impl EnforcementEngine {
         //   Any match → DENY immediately. Drift is irrelevant.
         // -----------------------------------------------------------------------
         for rule in &forbidden_rules {
-            let (cmp, _) = evaluate_rule(rule, &mut evidence)?;
+            let (cmp, _, _) = evaluate_rule(rule, &mut evidence)?;
             if cmp.decision == 1 {
                 println!(
                     "DENY (FORBIDDEN): rule '{}' matched — blocking immediately",
@@ -777,11 +792,14 @@ impl EnforcementEngine {
         //   Match + drift disabled (threshold == 0.0) → DENY, drift_triggered = false.
         // -----------------------------------------------------------------------
         for rule in &context_deny_rules {
-            let (cmp, _) = evaluate_rule(rule, &mut evidence)?;
+            let (cmp, _, policy_drift_score) = evaluate_rule(rule, &mut evidence)?;
             if cmp.decision == 1 {
                 let threshold = rule.drift_threshold();
                 let (drift_triggered, deny) = if threshold > 0.0 {
-                    (drift_score > threshold, drift_score > threshold)
+                    (
+                        policy_drift_score > threshold,
+                        policy_drift_score > threshold,
+                    )
                 } else {
                     // threshold == 0.0 → always deny on match
                     (false, true)
@@ -819,12 +837,12 @@ impl EnforcementEngine {
         //   Match otherwise → ALLOW.
         // -----------------------------------------------------------------------
         for rule in &context_allow_rules {
-            let (cmp, _) = evaluate_rule(rule, &mut evidence)?;
+            let (cmp, _, policy_drift_score) = evaluate_rule(rule, &mut evidence)?;
             if cmp.decision == 1 {
                 let threshold = rule.drift_threshold();
                 let sims = cmp.slice_similarities;
 
-                if threshold > 0.0 && drift_score > threshold {
+                if threshold > 0.0 && policy_drift_score > threshold {
                     println!(
                         "STEP_UP (CONTEXT_ALLOW): rule '{}' matched but drift exceeded threshold",
                         rule.rule_id()
@@ -893,7 +911,7 @@ impl EnforcementEngine {
         //   Any match → DEFER.
         // -----------------------------------------------------------------------
         for rule in &context_defer_rules {
-            let (cmp, _) = evaluate_rule(rule, &mut evidence)?;
+            let (cmp, _, _) = evaluate_rule(rule, &mut evidence)?;
             if cmp.decision == 1 {
                 println!(
                     "DEFER (CONTEXT_DEFER): rule '{}' matched",
@@ -1072,6 +1090,46 @@ impl EnforcementEngine {
             || rule_vector.resource_count > 0
             || rule_vector.data_count > 0
             || rule_vector.risk_count > 0
+    }
+
+    fn policy_similarity_score(
+        cmp: &ComparisonResult,
+        rule_vector: &RuleVector,
+        decision_mode: DecisionMode,
+        weights: [f32; 4],
+    ) -> f32 {
+        match decision_mode {
+            DecisionMode::MinMode => {
+                let counts = [
+                    rule_vector.action_count,
+                    rule_vector.resource_count,
+                    rule_vector.data_count,
+                    rule_vector.risk_count,
+                ];
+                let mut score: Option<f32> = None;
+                for idx in 0..4 {
+                    if counts[idx] > 0 {
+                        score = Some(match score {
+                            Some(existing) => existing.min(cmp.slice_similarities[idx]),
+                            None => cmp.slice_similarities[idx],
+                        });
+                    }
+                }
+                score.unwrap_or(1.0).clamp(0.0, 1.0)
+            }
+            DecisionMode::WeightedAvgMode => {
+                let weight_sum: f32 = weights.iter().sum();
+                let weight_sum = if weight_sum < 1e-8 { 1.0 } else { weight_sum };
+                let score = cmp
+                    .slice_similarities
+                    .iter()
+                    .zip(weights.iter())
+                    .map(|(similarity, weight)| similarity * weight)
+                    .sum::<f32>()
+                    / weight_sum;
+                score.clamp(0.0, 1.0)
+            }
+        }
     }
 
     fn rule_requires_semantic(&self, rule: &Arc<dyn RuleInstance>) -> bool {

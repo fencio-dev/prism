@@ -360,6 +360,9 @@ class ComparisonResult(BaseModel):
     decision_name: str = Field(default="")
     modified_params: Optional[dict] = Field(default=None)
     drift_triggered: bool = Field(default=False)
+    policy_drift_score: Optional[float] = Field(default=None, ge=0.0)
+    policy_similarity_score: Optional[float] = Field(default=None)
+    baseline_drift_score: Optional[float] = Field(default=None, ge=0.0)
     evaluation_mode: Literal["deterministic", "semantic", "hybrid", "network", "unknown"] = Field(
         default="unknown"
     )
@@ -385,14 +388,17 @@ class EnforcementResponse(BaseModel):
     Fields:
     - decision: Policy outcome — one of ALLOW, DENY, MODIFY, STEP_UP, DEFER
     - modified_params: Replacement tool params when decision == MODIFY; None otherwise
-    - drift_score: Per-call semantic distance from baseline (>= 0.0)
-    - drift_triggered: True when drift caused the enforcement outcome
+    - drift_score: Per-call distance from the nearest applicable policy after policy filtering
+    - baseline_drift_score: Optional legacy session drift from the first observed intent
+    - drift_triggered: True when policy drift caused the enforcement outcome
     - slice_similarities: Per-slot cosine similarities [action, resource, data, risk]
     - evidence: Per-boundary evaluation details
     """
     decision: Literal["ALLOW", "DENY", "MODIFY", "STEP_UP", "DEFER"]
     modified_params: Optional[dict] = Field(default=None)
     drift_score: float = Field(ge=0.0)
+    baseline_drift_score: Optional[float] = Field(default=None, ge=0.0)
+    drift_source: Literal["policy", "session_baseline", "none"] = Field(default="policy")
     drift_triggered: bool
     slice_similarities: list[float] = Field(min_length=4, max_length=4)
     evidence: list[BoundaryEvidence] = Field(default_factory=list)

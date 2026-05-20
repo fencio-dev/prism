@@ -603,7 +603,7 @@ export default function EnforcementDryRunForm() {
               <small style={styles.hint}>Comma-separated labels for data types accessed in this session. E.g. 'pii, financial, internal'. Influences risk scoring.</small>
             </div>
             <div style={styles.field}>
-              <label style={styles.label}>Cumulative Drift (0.0–1.0)</label>
+              <label style={styles.label}>Session Baseline Drift (0.0-1.0)</label>
               <input
                 className={INPUT_CLASS}
                 type="number"
@@ -614,7 +614,7 @@ export default function EnforcementDryRunForm() {
                 onChange={(e) => setField('ctxCumulativeDrift', e.target.value)}
                 placeholder="optional"
               />
-              <small style={styles.hint}>Semantic distance between the agent's current action and the original user request (0.0 = perfectly aligned, 1.0 = completely diverged). Used to trigger drift-sensitive policies.</small>
+              <small style={styles.hint}>Optional legacy session context: semantic distance between the agent's current action and the first observed request. Policy drift is computed separately against the nearest applicable policy during enforcement.</small>
             </div>
           </div>
         </fieldset>

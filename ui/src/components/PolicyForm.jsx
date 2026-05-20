@@ -502,7 +502,7 @@ export default function PolicyForm({ onSuccess, onCancel, policy = null }) {
           <legend className="px-1.5 text-xs font-medium uppercase tracking-wider text-[var(--prism-text-secondary)]">Advanced</legend>
           <div className="grid grid-cols-1 gap-x-6 gap-y-3 md:grid-cols-2">
             <div className="flex flex-col gap-1">
-              <label htmlFor="policy-drift-threshold" className="text-sm font-medium text-[var(--prism-text-primary)]">Drift Threshold - optional (0.0-1.0)</label>
+              <label htmlFor="policy-drift-threshold" className="text-sm font-medium text-[var(--prism-text-primary)]">Policy Drift Threshold - optional (0.0-1.0)</label>
               <input
                 id="policy-drift-threshold"
                 className={`${INPUT_CLASS} font-mono tracking-tight`}
@@ -514,7 +514,7 @@ export default function PolicyForm({ onSuccess, onCancel, policy = null }) {
                 max={1}
                 step={0.01}
               />
-              <small className="text-xs leading-snug text-[var(--prism-text-secondary)]">Optional. If the semantic distance between the agent's current action and the user's original request exceeds this value (0.0-1.0), the policy triggers a DEFER or STEP_UP. Leave blank to disable drift enforcement for this policy.</small>
+              <small className="text-xs leading-snug text-[var(--prism-text-secondary)]">Optional. If the semantic distance from the agent's current action to the nearest applicable policy exceeds this value (0.0-1.0), the policy triggers a DEFER or STEP_UP. Leave blank to disable drift enforcement for this policy.</small>
             </div>
           </div>
           <div className="mt-3 grid grid-cols-1 gap-y-3">
