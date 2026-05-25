@@ -3,6 +3,8 @@ FROM --platform=$TARGETPLATFORM rust:1.84-bookworm AS builder
 
 WORKDIR /src
 
+ENV CARGO_BUILD_JOBS=1
+
 RUN set -eux; \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/*; \
     if [ -f /etc/apt/sources.list ]; then \
