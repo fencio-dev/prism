@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-import logging
+from fencio_logger import get_logger
+
 import time
 
 from app.services.db_infra_client import db_infra_client
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__, service_name="prism")
 
 
 def write_call(

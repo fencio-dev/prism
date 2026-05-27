@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from fencio_logger import get_logger
+
 import os
 import time
 import uuid
 from typing import Any, Optional
 
 import httpx
-import logging
 from fastmcp import Context
 from fastmcp.exceptions import ToolError
 from pydantic import BaseModel, Field, ValidationError
@@ -18,7 +19,7 @@ from .auth import authenticate_request
 from .app import mcp
 
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__, service_name="prism")
 
 
 class SendIntentResponse(BaseModel):

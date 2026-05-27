@@ -75,7 +75,10 @@ impl DbInfraClient {
             .header("Accept", "application/json")
     }
 
-    fn parse_json<T: DeserializeOwned>(&self, response: reqwest::blocking::Response) -> Result<T, String> {
+    fn parse_json<T: DeserializeOwned>(
+        &self,
+        response: reqwest::blocking::Response,
+    ) -> Result<T, String> {
         let status = response.status();
         if status.is_success() {
             response
@@ -115,12 +118,10 @@ impl DbInfraClient {
 
     pub fn delete_rule(&self, rule_id: &str) -> Result<(), String> {
         let response = self
-            .service_headers(
-                self.client.delete(format!(
-                    "{}/api/v1/prism-data-plane/rules/{}",
-                    self.base_url, rule_id
-                )),
-            )
+            .service_headers(self.client.delete(format!(
+                "{}/api/v1/prism-data-plane/rules/{}",
+                self.base_url, rule_id
+            )))
             .send()
             .map_err(|e| format!("Failed to delete prism_data_plane rule: {}", e))?;
         let _: serde_json::Value = self.parse_json(response)?;
@@ -154,12 +155,10 @@ impl DbInfraClient {
 
     pub fn get_hitlog(&self, session_id: &str) -> Result<Option<PrismHitlogRecord>, String> {
         let response = self
-            .service_headers(
-                self.client.get(format!(
-                    "{}/api/v1/prism-data-plane/hitlogs/{}",
-                    self.base_url, session_id
-                )),
-            )
+            .service_headers(self.client.get(format!(
+                "{}/api/v1/prism-data-plane/hitlogs/{}",
+                self.base_url, session_id
+            )))
             .send()
             .map_err(|e| format!("Failed to fetch prism_data_plane hitlog: {}", e))?;
 

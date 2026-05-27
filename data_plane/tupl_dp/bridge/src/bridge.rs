@@ -98,7 +98,7 @@ impl Bridge {
             let metadata: RuleMetadata = match serde_json::from_str(&rule_json) {
                 Ok(m) => m,
                 Err(e) => {
-                    eprintln!("Skipping rule {} with invalid JSON: {}", id, e);
+                    log::error!("Skipping rule {} with invalid JSON: {}", id, e);
                     continue;
                 }
             };
@@ -107,7 +107,11 @@ impl Bridge {
             let anchors_bin: Vec<u8> = match serde_json::from_str(&anchors_json) {
                 Ok(value) => value,
                 Err(e) => {
-                    eprintln!("Skipping rule {} with invalid anchor payload JSON: {}", id, e);
+                    log::error!(
+                        "Skipping rule {} with invalid anchor payload JSON: {}",
+                        id,
+                        e
+                    );
                     continue;
                 }
             };
@@ -115,7 +119,7 @@ impl Bridge {
             let rule_vector = match deserialize_rule_vector(&anchors_bin) {
                 Ok(v) => v,
                 Err(e) => {
-                    eprintln!("Skipping rule {} with invalid anchors: {}", id, e);
+                    log::error!("Skipping rule {} with invalid anchors: {}", id, e);
                     continue;
                 }
             };
@@ -334,14 +338,15 @@ fn serialize_rule_vector(v: &RuleVector) -> Vec<u8> {
 
     let mut out = Vec::with_capacity(total);
 
-    let write_block = |out: &mut Vec<u8>, block: &[[f32; SLOT_WIDTH]; MAX_ANCHORS_PER_SLOT], count: usize| {
-        for row in block.iter() {
-            for &f in row.iter() {
-                out.extend_from_slice(&f.to_le_bytes());
+    let write_block =
+        |out: &mut Vec<u8>, block: &[[f32; SLOT_WIDTH]; MAX_ANCHORS_PER_SLOT], count: usize| {
+            for row in block.iter() {
+                for &f in row.iter() {
+                    out.extend_from_slice(&f.to_le_bytes());
+                }
             }
-        }
-        out.extend_from_slice(&(count as u64).to_le_bytes());
-    };
+            out.extend_from_slice(&(count as u64).to_le_bytes());
+        };
 
     write_block(&mut out, &v.action_anchors, v.action_count);
     write_block(&mut out, &v.resource_anchors, v.resource_count);
@@ -368,24 +373,25 @@ fn deserialize_rule_vector(bytes: &[u8]) -> Result<RuleVector, String> {
         ));
     }
 
-    let read_block = |data: &[u8]| -> Result<([[f32; SLOT_WIDTH]; MAX_ANCHORS_PER_SLOT], usize), String> {
-        let mut block = [[0f32; SLOT_WIDTH]; MAX_ANCHORS_PER_SLOT];
-        let mut offset = 0;
-        for row in block.iter_mut() {
-            for f in row.iter_mut() {
-                let chunk: [u8; 4] = data[offset..offset + 4]
-                    .try_into()
-                    .map_err(|_| "Slice conversion failed".to_string())?;
-                *f = f32::from_le_bytes(chunk);
-                offset += 4;
+    let read_block =
+        |data: &[u8]| -> Result<([[f32; SLOT_WIDTH]; MAX_ANCHORS_PER_SLOT], usize), String> {
+            let mut block = [[0f32; SLOT_WIDTH]; MAX_ANCHORS_PER_SLOT];
+            let mut offset = 0;
+            for row in block.iter_mut() {
+                for f in row.iter_mut() {
+                    let chunk: [u8; 4] = data[offset..offset + 4]
+                        .try_into()
+                        .map_err(|_| "Slice conversion failed".to_string())?;
+                    *f = f32::from_le_bytes(chunk);
+                    offset += 4;
+                }
             }
-        }
-        let count_chunk: [u8; 8] = data[offset..offset + 8]
-            .try_into()
-            .map_err(|_| "Count slice conversion failed".to_string())?;
-        let count = u64::from_le_bytes(count_chunk) as usize;
-        Ok((block, count))
-    };
+            let count_chunk: [u8; 8] = data[offset..offset + 8]
+                .try_into()
+                .map_err(|_| "Count slice conversion failed".to_string())?;
+            let count = u64::from_le_bytes(count_chunk) as usize;
+            Ok((block, count))
+        };
 
     let (action_anchors, action_count) = read_block(&bytes[0..block_with_count])?;
     let (resource_anchors, resource_count) =

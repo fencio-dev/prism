@@ -26,7 +26,8 @@ Example:
     rule_vector = encoder.encode(canonical_boundary)  # Returns RuleVector(4, 16, 32)
 """
 
-import logging
+from fencio_logger import get_logger
+
 from typing import Tuple
 
 import numpy as np
@@ -35,7 +36,7 @@ from app.models import DesignBoundary
 from app.services.param_canonicalizer import canonicalize_params
 from app.services.semantic_encoder import SemanticEncoder
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__, service_name="prism")
 
 
 class RuleVector:

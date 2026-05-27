@@ -1,11 +1,12 @@
-import logging
+from fencio_logger import get_logger
+
 import os
 from typing import Optional
 
 from fastapi import Header, HTTPException, status
 from pydantic import BaseModel
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__, service_name="prism")
 
 
 class User(BaseModel):

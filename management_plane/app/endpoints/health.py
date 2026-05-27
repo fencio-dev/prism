@@ -4,7 +4,8 @@ Health check endpoint.
 Provides GET /health for monitoring and readiness checks.
 """
 
-import logging
+from fencio_logger import get_logger
+
 import os
 from typing import Literal
 
@@ -15,7 +16,7 @@ from pydantic import BaseModel, Field
 
 from ..settings import config
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__, service_name="prism")
 
 router = APIRouter(tags=["health"])
 

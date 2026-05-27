@@ -4,7 +4,8 @@ Data Plane gRPC client for rule enforcement.
 Internal client for Management Plane to communicate with Rust Data Plane.
 """
 
-import logging
+from fencio_logger import get_logger
+
 import os
 import grpc
 import json
@@ -24,7 +25,7 @@ from app.models import BoundaryEvidence, ComparisonResult, DesignBoundary, Inten
 from app.services.policy_converter import PolicyConverter
 from app.services.policy_encoder import RuleVector
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__, service_name="prism")
 
 class DataPlaneError(Exception):
     """Error communicating with the Data Plane gRPC server."""

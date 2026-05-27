@@ -79,9 +79,11 @@ fn param_value_to_json(value: &ParamValue) -> Value {
             .map(Value::Number)
             .unwrap_or(Value::Null),
         ParamValue::Bool(b) => Value::Bool(*b),
-        ParamValue::StringList(list) => {
-            Value::Array(list.iter().map(|item| Value::String(item.clone())).collect())
-        }
+        ParamValue::StringList(list) => Value::Array(
+            list.iter()
+                .map(|item| Value::String(item.clone()))
+                .collect(),
+        ),
     }
 }
 
@@ -153,7 +155,9 @@ impl DataPlaneService {
             .expect("Failed to create enforcement engine with telemetry"),
         );
 
-        let hitlog_query = Arc::new(crate::telemetry::query::HitlogQuery::new(&db_infra_base_url));
+        let hitlog_query = Arc::new(crate::telemetry::query::HitlogQuery::new(
+            &db_infra_base_url,
+        ));
 
         // Initialize refresh service for warm storage refresh
         let refresh_service = Arc::new(RefreshService::new(Arc::clone(&bridge)));
@@ -165,7 +169,6 @@ impl DataPlaneService {
             refresh_service,
         }
     }
-
 }
 
 #[tonic::async_trait]
@@ -177,13 +180,13 @@ impl DataPlane for DataPlaneService {
     ) -> Result<Response<InstallRulesResponse>, Status> {
         let req = request.into_inner();
 
-        println!("================================================");
-        println!("  Installing Rules for Agent: {}", req.agent_id);
-        println!("================================================");
-        println!("  Config ID: {}", req.config_id);
-        println!("  Owner: {}", req.owner);
-        println!("  Rules to install: {}", req.rules.len());
-        println!();
+        log::info!("================================================");
+        log::info!("  Installing Rules for Agent: {}", req.agent_id);
+        log::info!("================================================");
+        log::info!("  Config ID: {}", req.config_id);
+        log::info!("  Owner: {}", req.owner);
+        log::info!("  Rules to install: {}", req.rules.len());
+        log::info!("");
 
         let mut installed_count = 0;
         let mut rules_by_layer = HashMap::new();
@@ -253,7 +256,7 @@ impl DataPlane for DataPlaneService {
                 cp_rule.layer.as_str()
             };
 
-            println!(
+            log::info!(
                 "Processing rule: {} (type: {}, layer: {})",
                 cp_rule.rule_id,
                 rule_type,
@@ -265,7 +268,7 @@ impl DataPlane for DataPlaneService {
                     "Unsupported rule_type '{}' for rule {}",
                     rule_type, cp_rule.rule_id
                 );
-                eprintln!("  ✗ {}\n", error_msg);
+                log::error!("  ✗ {}\n", error_msg);
                 failed_rules.push(error_msg);
                 continue;
             }
@@ -274,7 +277,7 @@ impl DataPlane for DataPlaneService {
                 Ok(rule) => rule,
                 Err(e) => {
                     let error_msg = format!("Failed to convert rule {}: {}", cp_rule.rule_id, e);
-                    eprintln!("  ✗ {}\n", error_msg);
+                    log::error!("  ✗ {}\n", error_msg);
                     failed_rules.push(error_msg);
                     continue;
                 }
@@ -288,7 +291,7 @@ impl DataPlane for DataPlaneService {
                         "Design boundary '{}' missing pre-encoded anchors",
                         cp_rule.rule_id
                     );
-                    eprintln!("  ✗ {}\n", error_msg);
+                    log::error!("  ✗ {}\n", error_msg);
                     failed_rules.push(error_msg);
                     continue;
                 }
@@ -298,7 +301,7 @@ impl DataPlane for DataPlaneService {
                 Ok(vector) => vector,
                 Err(err) => {
                     let error_msg = format!("Invalid anchors for {}: {}", cp_rule.rule_id, err);
-                    eprintln!("  ✗ {}\n", error_msg);
+                    log::error!("  ✗ {}\n", error_msg);
                     failed_rules.push(error_msg);
                     continue;
                 }
@@ -313,31 +316,31 @@ impl DataPlane for DataPlaneService {
                         cp_rule.layer.clone()
                     };
                     *rules_by_layer.entry(layer_key).or_insert(0) += 1;
-                    println!("  ✓ Successfully installed\n");
+                    log::info!("  ✓ Successfully installed\n");
                 }
                 Err(e) => {
                     let error_msg =
                         format!("Failed to add rule {} to bridge: {}", cp_rule.rule_id, e);
-                    eprintln!("  ✗ {}\n", error_msg);
+                    log::error!("  ✗ {}\n", error_msg);
                     failed_rules.push(error_msg);
                 }
             }
         }
 
-        println!("================================================");
-        println!("  Installation Summary");
-        println!("================================================");
-        println!("  Successfully installed: {}", installed_count);
-        println!("  Failed: {}", failed_rules.len());
-        println!("  Bridge version: {}", self.bridge.version());
-        println!("=================================================\n");
+        log::info!("================================================");
+        log::info!("  Installation Summary");
+        log::info!("================================================");
+        log::info!("  Successfully installed: {}", installed_count);
+        log::info!("  Failed: {}", failed_rules.len());
+        log::info!("  Bridge version: {}", self.bridge.version());
+        log::info!("=================================================\n");
 
         let current_stats = self.bridge.stats();
-        println!("Current bridge counts:");
-        println!("  - Total rules: {}", current_stats.total_rules);
-        println!("  - Global rules: {}", current_stats.global_rules);
-        println!("  - Scoped rules: {}", current_stats.scoped_rules);
-        println!();
+        log::info!("Current bridge counts:");
+        log::info!("  - Total rules: {}", current_stats.total_rules);
+        log::info!("  - Global rules: {}", current_stats.global_rules);
+        log::info!("  - Scoped rules: {}", current_stats.scoped_rules);
+        log::info!("");
 
         if !failed_rules.is_empty() {
             return Err(Status::internal(format!(
@@ -368,7 +371,7 @@ impl DataPlane for DataPlaneService {
         request: Request<RemoveAgentRulesRequest>,
     ) -> Result<Response<RemoveAgentRulesResponse>, Status> {
         let req = request.into_inner();
-        println!("Removing rules for agent {}", req.agent_id);
+        log::info!("Removing rules for agent {}", req.agent_id);
 
         let mut removed_count = 0;
 
@@ -380,7 +383,7 @@ impl DataPlane for DataPlaneService {
             match self.bridge.remove_rule(rule.rule_id()) {
                 Ok(true) => removed_count += 1,
                 Ok(false) => {}
-                Err(e) => eprintln!("Failed to remove rule {}: {}", rule.rule_id(), e),
+                Err(e) => log::error!("Failed to remove rule {}: {}", rule.rule_id(), e),
             }
         }
 
@@ -397,9 +400,10 @@ impl DataPlane for DataPlaneService {
         request: Request<RemovePolicyRequest>,
     ) -> Result<Response<RemovePolicyResponse>, Status> {
         let req = request.into_inner();
-        println!(
+        log::info!(
             "Removing policy {} for agent {}",
-            req.policy_id, req.agent_id
+            req.policy_id,
+            req.agent_id
         );
 
         let Some(rule) = self.bridge.get_rule(&req.policy_id) else {
@@ -464,9 +468,9 @@ impl DataPlane for DataPlaneService {
         let req = request.into_inner();
         let request_id = req.request_id.clone();
 
-        println!("================================================");
-        println!("  Enforcing Intent");
-        println!("================================================");
+        log::info!("================================================");
+        log::info!("  Enforcing Intent");
+        log::info!("================================================");
 
         let vector_override = if req.intent_vector.is_empty() {
             None
@@ -474,7 +478,7 @@ impl DataPlane for DataPlaneService {
             match req.intent_vector.clone().try_into() {
                 Ok(arr) => Some(arr),
                 Err(_) => {
-                    eprintln!(
+                    log::error!(
                         "Invalid intent_vector length {} (expected 128). Ignoring override.",
                         req.intent_vector.len()
                     );
@@ -482,7 +486,7 @@ impl DataPlane for DataPlaneService {
                 }
             }
         } else {
-            eprintln!(
+            log::error!(
                 "Invalid intent_vector length {} (expected 128). Ignoring override.",
                 req.intent_vector.len()
             );
@@ -494,7 +498,12 @@ impl DataPlane for DataPlaneService {
         // Call enforcement engine
         let result = self
             .enforcement_engine
-            .enforce(&req.intent_event_json, vector_override, &request_id, drift_score)
+            .enforce(
+                &req.intent_event_json,
+                vector_override,
+                &request_id,
+                drift_score,
+            )
             .await
             .map_err(|e| Status::internal(format!("Enforcement failed: {}", e)))?;
 
@@ -510,12 +519,16 @@ impl DataPlane for DataPlaneService {
             result.decision as i32
         };
 
-        println!(
+        log::info!(
             "Enforcement Decision: {}",
-            if legacy_decision == 1 { "ALLOW" } else { "BLOCK" }
+            if legacy_decision == 1 {
+                "ALLOW"
+            } else {
+                "BLOCK"
+            }
         );
-        println!("Rules Evaluated: {}", result.rules_evaluated);
-        println!("=================================================\n");
+        log::info!("Rules Evaluated: {}", result.rules_evaluated);
+        log::info!("=================================================\n");
 
         // Build new AARM response fields from EnforcementDecision (if present)
         let (decision_name, modified_params, drift_triggered) =
@@ -662,18 +675,19 @@ impl DataPlane for DataPlaneService {
         &self,
         _request: Request<RefreshRulesRequest>,
     ) -> Result<Response<RefreshRulesResponse>, Status> {
-        println!("================================================");
-        println!("  RefreshRules RPC called");
-        println!("================================================");
+        log::info!("================================================");
+        log::info!("  RefreshRules RPC called");
+        log::info!("================================================");
 
         // Call refresh service
         match self.refresh_service.refresh_from_storage().await {
             Ok(stats) => {
-                println!(
+                log::info!(
                     "Refresh completed: {} rules in {}ms",
-                    stats.rules_refreshed, stats.duration_ms
+                    stats.rules_refreshed,
+                    stats.duration_ms
                 );
-                println!("=================================================\n");
+                log::info!("=================================================\n");
 
                 Ok(Response::new(RefreshRulesResponse {
                     success: true,
@@ -686,8 +700,8 @@ impl DataPlane for DataPlaneService {
                 }))
             }
             Err(e) => {
-                eprintln!("  ✗ Refresh failed: {}", e);
-                println!("=================================================\n");
+                log::error!("  ✗ Refresh failed: {}", e);
+                log::info!("=================================================\n");
                 Err(Status::internal(format!("Refresh failed: {}", e)))
             }
         }
@@ -722,7 +736,10 @@ fn convert_design_boundary_rule(
 
     let params_value = cp_params_to_value(&cp_rule.params);
 
-    let description = cp_rule.params.get("notes").and_then(|value| value.as_string());
+    let description = cp_rule
+        .params
+        .get("notes")
+        .and_then(|value| value.as_string());
 
     let scope = RuleScope::for_agent(cp_rule.agent_id.clone());
 
@@ -776,8 +793,8 @@ pub async fn start_grpc_server(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let addr = format!("0.0.0.0:{}", port).parse()?;
 
-    println!("Starting Data Plane gRPC server on {}", addr);
-    println!("Management Plane URL: {}", management_plane_url);
+    log::info!("Starting Data Plane gRPC server on {}", addr);
+    log::info!("Management Plane URL: {}", management_plane_url);
 
     let scheduler = Arc::new(RefreshScheduler::new(
         Arc::clone(&bridge),
@@ -787,7 +804,7 @@ pub async fn start_grpc_server(
     {
         let scheduler_runner = Arc::clone(&scheduler);
         tokio::spawn(async move {
-            println!("Spawning scheduled refresh background task");
+            log::info!("Spawning scheduled refresh background task");
             scheduler_runner.start().await;
         });
     }

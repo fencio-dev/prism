@@ -1,14 +1,15 @@
 from __future__ import annotations
 
+from fencio_logger import get_logger
+
 from dataclasses import dataclass
-import logging
 from typing import Mapping, Optional
 
 from fastmcp import Context
 from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_http_headers
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__, service_name="prism")
 
 
 @dataclass(frozen=True)

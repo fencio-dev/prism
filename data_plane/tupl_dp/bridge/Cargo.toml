@@ -8,6 +8,7 @@ license = "MIT"
 
 [dependencies]
 # Logging
+fencio_logger = { path = "../../../../utils/rust/logger" }
 log = "0.4"
 
 # Concurrency

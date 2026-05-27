@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
+from fencio_logger import get_logger
+
 import json
-import logging
 from functools import lru_cache
 from typing import Any, Optional
 from urllib.parse import urlparse
 
 from app.settings import config
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__, service_name="prism")
 
 try:  # Import lazily so unit tests without chromadb still run.
     import chromadb  # type: ignore

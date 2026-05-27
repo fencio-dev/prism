@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from fencio_logger import get_logger
+
 import asyncio
-import logging
 import time
 from typing import Any, Literal
 
@@ -11,7 +12,7 @@ from app.models import DesignBoundary, EnforcementResponse, IntentEvent
 from app.services.db_infra_client import DbInfraClientError, db_infra_client
 from app.settings import config
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__, service_name="prism")
 
 PrismIntelEventType = Literal[
     "prism.enforcement.completed",

@@ -7,13 +7,14 @@ Handles:
 3. Proto conversion helpers for rule installation
 """
 
-import logging
+from fencio_logger import get_logger
+
 import time
 from typing import Optional
 from .settings import config
 from .chroma_client import upsert_rule_payload, fetch_rule_payload
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__, service_name="prism")
 
 
 def sync_active_policies_to_dataplane() -> None:

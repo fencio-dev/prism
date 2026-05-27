@@ -1,8 +1,9 @@
 """Policy CRUD endpoints for v2 management plane."""
 
+from fencio_logger import get_logger
+
 import asyncio
 import json
-import logging
 import os
 import time
 import uuid
@@ -37,7 +38,7 @@ from app.services.policies import (
     upsert_policy_payload,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__, service_name="prism")
 
 router = APIRouter(prefix="/policies", tags=["policies-v2"])
 

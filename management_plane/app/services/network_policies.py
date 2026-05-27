@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
+from fencio_logger import get_logger
+
 import json
-import logging
 from typing import Optional
 
 from app.models import NetworkEndpointRule, NetworkPolicy
 from app.services.db_infra_client import db_infra_client
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__, service_name="prism")
 
 
 def _row_to_network_policy(row: dict) -> NetworkPolicy:

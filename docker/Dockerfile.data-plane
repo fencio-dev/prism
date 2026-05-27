@@ -20,9 +20,10 @@ RUN set -eux; \
     libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-COPY data_plane/ /src/data_plane/
+COPY prism/data_plane/ /src/prism/data_plane/
+COPY utils/rust/logger/ /src/utils/rust/logger/
 
-WORKDIR /src/data_plane/tupl_dp/bridge
+WORKDIR /src/prism/data_plane/tupl_dp/bridge
 
 RUN cargo build --release --bin bridge-server
 
@@ -39,9 +40,9 @@ RUN set -eux; \
     libssl3 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /src/data_plane/tupl_dp/bridge/target/release/bridge-server /app/bridge-server
+COPY --from=builder /src/prism/data_plane/tupl_dp/bridge/target/release/bridge-server /app/bridge-server
 
-RUN mkdir -p /app/data /var/hitlogs
+RUN mkdir -p /app/data/logs /var/hitlogs
 
 VOLUME ["/app/data"]
 
@@ -49,7 +50,9 @@ EXPOSE 50051
 
 ENV DATA_PLANE_PORT=50051 \
     HITLOG_SQLITE_PATH=/app/data/hitlogs.db \
-    MANAGEMENT_PLANE_URL=http://management-plane:47000/api/v2
+    MANAGEMENT_PLANE_URL=http://management-plane:47000/api/v2 \
+    FENCIO_LOG_ROOT=/app/data/logs \
+    LOG_LEVEL=INFO
 
 HEALTHCHECK --interval=10s --timeout=5s --retries=5 --start-period=15s \
     CMD curl -sf http://localhost:50051 || exit 1

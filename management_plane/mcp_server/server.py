@@ -1,15 +1,15 @@
 from __future__ import annotations
 
+from fencio_logger import get_logger
+
 import asyncio
-import logging
 import os
 import sys
 
 from .app import mcp
 
 
-logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__, service_name="prism")
 
 
 async def _verify_tools_registered() -> None:

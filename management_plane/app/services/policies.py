@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from fencio_logger import get_logger
+
 import json
-import logging
 from typing import Optional
 
 from app.chroma_client import get_rules_collection, upsert_rule_payload
@@ -11,7 +12,7 @@ from app.models import DesignBoundary
 from app.services.db_infra_client import db_infra_client
 from app.services.policy_encoder import RuleVector
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__, service_name="prism")
 
 
 def _row_to_boundary(row: dict) -> DesignBoundary:

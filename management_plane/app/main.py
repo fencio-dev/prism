@@ -5,8 +5,9 @@ Main entry point for the LLM Security Policy Enforcement Management Plane.
 Provides REST API for intent comparison, boundary management, and telemetry.
 """
 
+from fencio_logger import get_logger, register_and_get_logger
+
 import asyncio
-import logging
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -22,13 +23,7 @@ from .endpoints import enforcement_v2, health, policies_v2, telemetry, network_p
 from .services import session_store
 from mcp_server.app import mcp, initialize_tools
 
-# Configure logging
-logging.basicConfig(
-    level=getattr(logging, config.LOG_LEVEL),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
-
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__, service_name="prism")
 
 
 @asynccontextmanager
@@ -43,26 +38,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     - Cleanup on shutdown
     """
     # Startup
+    await register_and_get_logger(
+        __name__,
+        service_name="prism",
+        db_infra_base_url=config.DB_INFRA_BASE_URL,
+        timeout_seconds=config.DB_INFRA_TIMEOUT_SECONDS,
+    )
     logger.info(f"Starting {config.APP_NAME} v{config.VERSION}")
 
     try:
         # Validate configuration
         config.validate()
         logger.info("Configuration validated successfully")
-
-        # Set up file logging for Docker/persistent deployments
-        import os
-        import logging as _logging
-        _log_dir = Path(os.environ.get("PRISM_HOME", Path.home() / ".prism")) / "data" / "logs"
-        _log_dir.mkdir(parents=True, exist_ok=True)
-        _fmt = _logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
-        _mgmt_handler = _logging.FileHandler(_log_dir / "management-plane.log")
-        _mgmt_handler.setFormatter(_fmt)
-        _logging.getLogger().addHandler(_mgmt_handler)
-        _mcp_handler = _logging.FileHandler(_log_dir / "mcp-server.log")
-        _mcp_handler.setFormatter(_fmt)
-        _logging.getLogger("mcp_server").addHandler(_mcp_handler)
-        logger.info("File logging initialized at %s", _log_dir)
 
         # Initialize encoder services
         try:

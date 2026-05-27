@@ -11,9 +11,9 @@ use crate::rule_vector::RuleVector;
 /// Structure for returning comparison results
 #[derive(Debug, Clone, Copy)]
 pub struct ComparisonResult {
-    pub decision: u8,                    // 0 = block, 1 = allow
-    pub slice_similarities: [f32; 4],    // action, resource, data, risk
-    pub triggering_slice_idx: usize,     // index of argmax(sim_i * w_i), 0–3
+    pub decision: u8,                 // 0 = block, 1 = allow
+    pub slice_similarities: [f32; 4], // action, resource, data, risk
+    pub triggering_slice_idx: usize,  // index of argmax(sim_i * w_i), 0–3
 }
 
 /// Decision mode for rule enforcement
@@ -142,7 +142,11 @@ pub fn compare_intent_vs_rule(
                 .zip(counts.iter())
                 .all(|((sim, thresh), &count)| count == 0 || sim >= thresh);
 
-            if all_pass { 1 } else { 0 }
+            if all_pass {
+                1
+            } else {
+                0
+            }
         }
         DecisionMode::WeightedAvgMode => {
             let weight_sum: f32 = weights.iter().sum();
@@ -162,7 +166,11 @@ pub fn compare_intent_vs_rule(
                 .sum::<f32>()
                 / weight_sum;
 
-            if weighted_score >= weighted_threshold { 1 } else { 0 }
+            if weighted_score >= weighted_threshold {
+                1
+            } else {
+                0
+            }
         }
     };
 

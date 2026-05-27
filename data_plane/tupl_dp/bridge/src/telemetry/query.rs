@@ -166,7 +166,11 @@ impl HitlogQuery {
             }
         }
         if let Some(ref rule_id) = filter.rule_id {
-            if !session.rules_evaluated.iter().any(|r| &r.rule_id == rule_id) {
+            if !session
+                .rules_evaluated
+                .iter()
+                .any(|r| &r.rule_id == rule_id)
+            {
                 return false;
             }
         }

@@ -10,9 +10,10 @@ Features:
 - AARM policy decision: ALLOW, DENY, MODIFY, STEP_UP, DEFER
 """
 
+from fencio_logger import get_logger
+
 import asyncio
 import json
-import logging
 import os
 import time
 import uuid
@@ -39,7 +40,7 @@ from app.services.data_intel_client import emit_enforcement_completed
 from app.services.db_infra_client import DbInfraClientError, db_infra_client
 from app.services.policies import list_policy_records
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__, service_name="prism")
 
 router = APIRouter(prefix="", tags=["enforcement-v2"])
 

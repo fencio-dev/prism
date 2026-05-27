@@ -5,7 +5,8 @@ Provides deterministic pattern matching against network policy whitelists.
 Evaluated BEFORE semantic policies for fast, fail-closed enforcement.
 """
 
-import logging
+from fencio_logger import get_logger
+
 import re
 from typing import Optional
 
@@ -14,7 +15,7 @@ from pydantic import BaseModel
 from app.models import NetworkContext, NetworkEndpointRule, NetworkPolicy
 from app.services import network_policies as network_policy_service
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__, service_name="prism")
 
 
 class NetworkPolicyResult(BaseModel):

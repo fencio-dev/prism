@@ -1,7 +1,8 @@
 """Telemetry query endpoints for management plane."""
 
+from fencio_logger import get_logger
+
 import json
-import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
@@ -17,7 +18,7 @@ from app.telemetry_models import (
     TelemetryRunSummary,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__, service_name="prism")
 
 router = APIRouter(tags=["telemetry"])
 

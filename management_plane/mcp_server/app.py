@@ -1,8 +1,9 @@
-import logging
+from fencio_logger import get_logger
+
 from fastmcp import FastMCP
 from starlette.responses import JSONResponse
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__, service_name="prism")
 
 mcp = FastMCP(name="guard-mcp-server")
 

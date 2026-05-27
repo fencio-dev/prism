@@ -35,7 +35,8 @@ Performance Targets:
 - Total per intent: <10ms (4 slots × ~2ms)
 """
 
-import logging
+from fencio_logger import get_logger
+
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional
@@ -43,7 +44,7 @@ from typing import Optional
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__, service_name="prism")
 
 # Global model instance (lazy loaded per process)
 _MODEL: Optional[SentenceTransformer] = None

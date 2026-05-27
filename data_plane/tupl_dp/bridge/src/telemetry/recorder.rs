@@ -88,7 +88,12 @@ impl TelemetryRecorder {
     }
 
     /// Start a new enforcement session
-    pub fn start_session(&self, layer: String, intent_json: String, request_id: &str) -> Option<SessionId> {
+    pub fn start_session(
+        &self,
+        layer: String,
+        intent_json: String,
+        request_id: &str,
+    ) -> Option<SessionId> {
         if !self.config.enabled {
             return None;
         }

@@ -176,11 +176,7 @@ struct IntentEncodingResponse {
 // ============================================================================
 
 impl EnforcementEngine {
-    fn build_fail_closed_evidence(
-        rule_id: &str,
-        rule_name: &str,
-        details: &str,
-    ) -> RuleEvidence {
+    fn build_fail_closed_evidence(rule_id: &str, rule_name: &str, details: &str) -> RuleEvidence {
         RuleEvidence {
             rule_id: rule_id.to_string(),
             rule_name: rule_name.to_string(),
@@ -264,7 +260,7 @@ impl EnforcementEngine {
         let tenant_id = intent.tenant_id.clone();
         let actor_id = intent.actor.id.clone();
 
-        println!("Enforcing intent for layer: {}", layer);
+        log::info!("Enforcing intent for layer: {}", layer);
 
         // Start telemetry session (uses request_id as session_id if non-empty)
         let session_id = self
@@ -314,7 +310,7 @@ impl EnforcementEngine {
                 "No policies are configured for layer {}; Prism denied the intent by default.",
                 layer
             );
-            println!(
+            log::info!(
                 "No rules configured for layer {}, blocking by default",
                 layer
             );
@@ -353,7 +349,7 @@ impl EnforcementEngine {
         }
 
         let rules_count = rules.len();
-        println!("Found {} rules for layer {}", rules_count, layer);
+        log::info!("Found {} rules for layer {}", rules_count, layer);
 
         // Record rules queried
         if let (Some(ref telemetry), Some(ref sid)) = (&self.telemetry, &session_id) {
@@ -399,12 +395,13 @@ impl EnforcementEngine {
                             "Semantic intent encoding failed; Prism denied the intent by default. Error: {}",
                             err
                         );
-                        println!(
+                        log::info!(
                             "Intent encoding failed: {}. Blocking intent (fail-closed).",
                             err
                         );
 
-                        if let (Some(ref telemetry), Some(ref sid)) = (&self.telemetry, &session_id) {
+                        if let (Some(ref telemetry), Some(ref sid)) = (&self.telemetry, &session_id)
+                        {
                             telemetry.with_session(sid, |session| {
                                 session.add_event(SessionEvent::EncodingFailed {
                                     timestamp_us: EnforcementSession::timestamp_us(),
@@ -426,7 +423,9 @@ impl EnforcementEngine {
                                 "Semantic Evaluation Failed",
                                 &reason,
                             )],
-                            session_id: session_id.clone().unwrap_or_else(|| request_id.to_string()),
+                            session_id: session_id
+                                .clone()
+                                .unwrap_or_else(|| request_id.to_string()),
                             enforcement_decision: Some(EnforcementDecision {
                                 decision: Decision::Deny,
                                 modified_params: None,
@@ -492,33 +491,37 @@ impl EnforcementEngine {
                 });
             }
 
-            let rule_vector = self.bridge.get_rule_anchors(rule.rule_id()).unwrap_or_default();
+            let rule_vector = self
+                .bridge
+                .get_rule_anchors(rule.rule_id())
+                .unwrap_or_default();
             let semantic_required = self.rule_vector_requires_semantic(&rule_vector);
             let payload = rule.management_plane_payload();
-            let connection_result = Self::parse_connection_match(&payload).map(|connection_match| {
-                ConnectionEvaluationPayload {
-                    matched: true,
-                    source_agent: connection_match.source_agent,
-                    source_layer: connection_match.source_layer,
-                    destination_agent: connection_match.destination_agent,
-                    destination_layer: connection_match.destination_layer,
-                    policy_mode: payload
-                        .get("policy_mode")
-                        .and_then(|value| value.as_str())
-                        .unwrap_or("Enforce")
-                        .to_string(),
-                    policy_type: payload
-                        .get("policy_type")
-                        .and_then(|value| value.as_str())
-                        .unwrap_or("context_allow")
-                        .to_string(),
-                    policy_effect: match rule.policy_type() {
-                        PolicyType::Forbidden | PolicyType::ContextDeny => "deny".to_string(),
-                        PolicyType::ContextAllow => "allow".to_string(),
-                        PolicyType::ContextDefer => "defer".to_string(),
-                    },
-                }
-            });
+            let connection_result =
+                Self::parse_connection_match(&payload).map(|connection_match| {
+                    ConnectionEvaluationPayload {
+                        matched: true,
+                        source_agent: connection_match.source_agent,
+                        source_layer: connection_match.source_layer,
+                        destination_agent: connection_match.destination_agent,
+                        destination_layer: connection_match.destination_layer,
+                        policy_mode: payload
+                            .get("policy_mode")
+                            .and_then(|value| value.as_str())
+                            .unwrap_or("Enforce")
+                            .to_string(),
+                        policy_type: payload
+                            .get("policy_type")
+                            .and_then(|value| value.as_str())
+                            .unwrap_or("context_allow")
+                            .to_string(),
+                        policy_effect: match rule.policy_type() {
+                            PolicyType::Forbidden | PolicyType::ContextDeny => "deny".to_string(),
+                            PolicyType::ContextAllow => "allow".to_string(),
+                            PolicyType::ContextDefer => "defer".to_string(),
+                        },
+                    }
+                });
             let (deterministic_passed, deterministic_reason, deterministic_results) =
                 self.evaluate_deterministic_conditions(rule, &intent)?;
             let semantic_conditions = Self::parse_semantic_conditions(&payload)?;
@@ -718,8 +721,13 @@ impl EnforcementEngine {
             let evaluation_mode = Self::derive_overall_evaluation_mode(&evidence);
             let reason = match enforcement_decision.decision {
                 Decision::Allow => "Matched an allow policy.".to_string(),
-                Decision::Modify => "Matched an allow policy with parameter modification.".to_string(),
-                Decision::StepUp => "Matched an allow policy, but policy drift exceeded the configured threshold.".to_string(),
+                Decision::Modify => {
+                    "Matched an allow policy with parameter modification.".to_string()
+                }
+                Decision::StepUp => {
+                    "Matched an allow policy, but policy drift exceeded the configured threshold."
+                        .to_string()
+                }
                 Decision::Defer => "Matched a defer policy.".to_string(),
                 Decision::Deny => {
                     if evidence.is_empty() {
@@ -741,7 +749,8 @@ impl EnforcementEngine {
                     session.performance.evaluation_duration_us = evaluation_duration;
                     session.final_similarities = Some(final_similarities);
                 });
-                t.complete_session(sid, legacy_decision, total_duration).ok();
+                t.complete_session(sid, legacy_decision, total_duration)
+                    .ok();
             }
 
             EnforcementResult {
@@ -763,7 +772,7 @@ impl EnforcementEngine {
         for rule in &forbidden_rules {
             let (cmp, _, _) = evaluate_rule(rule, &mut evidence)?;
             if cmp.decision == 1 {
-                println!(
+                log::info!(
                     "DENY (FORBIDDEN): rule '{}' matched — blocking immediately",
                     rule.rule_id()
                 );
@@ -805,7 +814,7 @@ impl EnforcementEngine {
                     (false, true)
                 };
                 if deny {
-                    println!(
+                    log::info!(
                         "DENY (CONTEXT_DENY): rule '{}' matched (drift_triggered={})",
                         rule.rule_id(),
                         drift_triggered
@@ -843,7 +852,7 @@ impl EnforcementEngine {
                 let sims = cmp.slice_similarities;
 
                 if threshold > 0.0 && policy_drift_score > threshold {
-                    println!(
+                    log::info!(
                         "STEP_UP (CONTEXT_ALLOW): rule '{}' matched but drift exceeded threshold",
                         rule.rule_id()
                     );
@@ -863,7 +872,7 @@ impl EnforcementEngine {
                         request_id,
                     ));
                 } else if let Some(spec) = rule.modification_spec() {
-                    println!(
+                    log::info!(
                         "MODIFY (CONTEXT_ALLOW): rule '{}' matched with modification_spec",
                         rule.rule_id()
                     );
@@ -883,10 +892,7 @@ impl EnforcementEngine {
                         request_id,
                     ));
                 } else {
-                    println!(
-                        "ALLOW (CONTEXT_ALLOW): rule '{}' matched",
-                        rule.rule_id()
-                    );
+                    log::info!("ALLOW (CONTEXT_ALLOW): rule '{}' matched", rule.rule_id());
                     let ed = EnforcementDecision {
                         decision: Decision::Allow,
                         modified_params: None,
@@ -913,10 +919,7 @@ impl EnforcementEngine {
         for rule in &context_defer_rules {
             let (cmp, _, _) = evaluate_rule(rule, &mut evidence)?;
             if cmp.decision == 1 {
-                println!(
-                    "DEFER (CONTEXT_DEFER): rule '{}' matched",
-                    rule.rule_id()
-                );
+                log::info!("DEFER (CONTEXT_DEFER): rule '{}' matched", rule.rule_id());
                 let ed = EnforcementDecision {
                     decision: Decision::Defer,
                     modified_params: None,
@@ -940,10 +943,7 @@ impl EnforcementEngine {
         // Pass 5 — FAIL CLOSED
         //   No rule matched in any pass → DENY.
         // -----------------------------------------------------------------------
-        println!(
-            "DENY (FAIL-CLOSED): No rules matched for layer {}",
-            layer
-        );
+        log::info!("DENY (FAIL-CLOSED): No rules matched for layer {}", layer);
 
         let avg_similarities = Self::average_similarities(&evidence);
         let ed = EnforcementDecision {
@@ -1014,7 +1014,7 @@ impl EnforcementEngine {
         intent: &IntentEvent,
         dry_run_rule_ids: Option<&HashSet<String>>,
     ) -> Result<Vec<Arc<dyn RuleInstance>>, String> {
-        println!("Querying rules for layer: {}", layer);
+        log::info!("Querying rules for layer: {}", layer);
 
         let requested_layer = if layer.is_empty() { None } else { Some(layer) };
 
@@ -1024,9 +1024,7 @@ impl EnforcementEngine {
             .into_iter()
             .filter(|rule| rule.is_enabled())
             .filter(|rule| match dry_run_rule_ids {
-                Some(rule_ids) if !rule_ids.is_empty() => {
-                    rule_ids.contains(rule.rule_id())
-                }
+                Some(rule_ids) if !rule_ids.is_empty() => rule_ids.contains(rule.rule_id()),
                 _ => rule.scope().applies_to(actor_id) || rule.scope().applies_to(tenant_id),
             })
             .filter(|rule| match (rule.layer(), requested_layer) {
@@ -1039,7 +1037,13 @@ impl EnforcementEngine {
 
         filtered.sort_by(|a, b| b.priority().cmp(&a.priority()));
 
-        println!("Found {} rules for layer {} (actor: {}, tenant: {})", filtered.len(), layer, actor_id, tenant_id);
+        log::info!(
+            "Found {} rules for layer {} (actor: {}, tenant: {})",
+            filtered.len(),
+            layer,
+            actor_id,
+            tenant_id
+        );
         Ok(filtered)
     }
 
@@ -1160,9 +1164,7 @@ impl EnforcementEngine {
             .map_err(|e| format!("Invalid deterministic_conditions payload: {}", e))
     }
 
-    fn parse_semantic_conditions(
-        payload: &Value,
-    ) -> Result<Vec<SemanticConditionPayload>, String> {
+    fn parse_semantic_conditions(payload: &Value) -> Result<Vec<SemanticConditionPayload>, String> {
         let Some(encoded) = payload
             .get("semantic_conditions")
             .and_then(|value| value.as_str())
@@ -1186,7 +1188,12 @@ impl EnforcementEngine {
             intent.destination_agent.as_deref(),
             intent.destination_layer.as_deref(),
         ) {
-            (Some(source_agent), Some(source_layer), Some(destination_agent), Some(destination_layer)) => {
+            (
+                Some(source_agent),
+                Some(source_layer),
+                Some(destination_agent),
+                Some(destination_layer),
+            ) => {
                 source_agent == connection_match.source_agent
                     && source_layer == connection_match.source_layer
                     && destination_agent == connection_match.destination_agent
@@ -1211,12 +1218,16 @@ impl EnforcementEngine {
         for condition in conditions {
             let result = match condition.condition_type.as_str() {
                 "pii_regex" => self.evaluate_pii_regex(&condition, intent)?,
-                "prompt_injection_regex" => self.evaluate_prompt_injection_regex(&condition, intent)?,
+                "prompt_injection_regex" => {
+                    self.evaluate_prompt_injection_regex(&condition, intent)?
+                }
                 "regex_pattern" => self.evaluate_regex_pattern(&condition, intent)?,
                 "payload_size" => self.evaluate_payload_size(&condition, intent),
                 "tool_name" => self.evaluate_tool_name(&condition, intent),
                 "request_rate" => self.evaluate_request_rate(&condition, intent),
-                "tool_parameter_validation" => self.evaluate_tool_parameter_validation(&condition, intent),
+                "tool_parameter_validation" => {
+                    self.evaluate_tool_parameter_validation(&condition, intent)
+                }
                 "input_token_count" => self.evaluate_input_token_count(&condition, intent),
                 "record_count" => self.evaluate_record_count(&condition, intent),
                 "output_channel" => self.evaluate_output_channel(&condition, intent),
@@ -1246,13 +1257,20 @@ impl EnforcementEngine {
             if !passed {
                 return Ok((
                     false,
-                    format!("deterministic condition failed: {}", condition.condition_type),
+                    format!(
+                        "deterministic condition failed: {}",
+                        condition.condition_type
+                    ),
                     results,
                 ));
             }
         }
 
-        Ok((true, "all deterministic conditions passed".to_string(), results))
+        Ok((
+            true,
+            "all deterministic conditions passed".to_string(),
+            results,
+        ))
     }
 
     fn evaluate_semantic_conditions(
@@ -1264,7 +1282,12 @@ impl EnforcementEngine {
         let payload = rule.management_plane_payload();
         let conditions = Self::parse_semantic_conditions(&payload)?;
         if conditions.is_empty() {
-            return Ok((true, "no semantic conditions".to_string(), [0.0; 4], Vec::new()));
+            return Ok((
+                true,
+                "no semantic conditions".to_string(),
+                [0.0; 4],
+                Vec::new(),
+            ));
         }
 
         let semantic_cmp = compare_intent_vs_rule(
@@ -1278,15 +1301,16 @@ impl EnforcementEngine {
         let mut results = Vec::with_capacity(conditions.len());
         for condition in conditions {
             let result = match condition.condition_type.as_str() {
-                "prompt_attack_semantic" => {
-                    self.evaluate_prompt_attack_semantic(&condition, semantic_cmp.slice_similarities)?
-                }
-                "tool_call_semantic" => {
-                    self.evaluate_positive_semantic_condition(&condition, semantic_cmp.slice_similarities)
-                }
-                "tool_response_semantic" => {
-                    self.evaluate_positive_semantic_condition(&condition, semantic_cmp.slice_similarities)
-                }
+                "prompt_attack_semantic" => self
+                    .evaluate_prompt_attack_semantic(&condition, semantic_cmp.slice_similarities)?,
+                "tool_call_semantic" => self.evaluate_positive_semantic_condition(
+                    &condition,
+                    semantic_cmp.slice_similarities,
+                ),
+                "tool_response_semantic" => self.evaluate_positive_semantic_condition(
+                    &condition,
+                    semantic_cmp.slice_similarities,
+                ),
                 _ => SemanticConditionResultPayload {
                     condition_type: condition.condition_type.clone(),
                     operator: condition.operator.clone(),
@@ -1342,7 +1366,11 @@ impl EnforcementEngine {
                 details: "No payload_text was provided".to_string(),
             });
         };
-        let Some(patterns) = condition.parameters.get("pii_patterns").and_then(|v| v.as_object()) else {
+        let Some(patterns) = condition
+            .parameters
+            .get("pii_patterns")
+            .and_then(|v| v.as_object())
+        else {
             return Ok(DeterministicConditionResultPayload {
                 condition_type: condition.condition_type.clone(),
                 operator: condition.operator.clone(),
@@ -1357,7 +1385,11 @@ impl EnforcementEngine {
         let mut found_match = false;
         let mut matched_pattern_name: Option<String> = None;
         for config in patterns.values() {
-            if !config.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true) {
+            if !config
+                .get("enabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true)
+            {
                 continue;
             }
             let Some(pattern) = config.get("pattern").and_then(|v| v.as_str()) else {
@@ -1372,7 +1404,8 @@ impl EnforcementEngine {
             }
         }
 
-        let passed = matches!(condition.operator.as_str(), "not_contains" | "absent") && !found_match;
+        let passed =
+            matches!(condition.operator.as_str(), "not_contains" | "absent") && !found_match;
         let details = if passed {
             "No enabled PII patterns matched".to_string()
         } else if let Some(pattern) = matched_pattern_name {
@@ -1413,7 +1446,8 @@ impl EnforcementEngine {
                 let Some(patterns) = condition
                     .parameters
                     .get("blocked_patterns")
-                    .and_then(|v| v.as_array()) else {
+                    .and_then(|v| v.as_array())
+                else {
                     return Ok(DeterministicConditionResultPayload {
                         condition_type: condition.condition_type.clone(),
                         operator: condition.operator.clone(),
@@ -1434,7 +1468,8 @@ impl EnforcementEngine {
                 let Some(patterns) = condition
                     .parameters
                     .get("allowed_patterns")
-                    .and_then(|v| v.as_array()) else {
+                    .and_then(|v| v.as_array())
+                else {
                     return Ok(DeterministicConditionResultPayload {
                         condition_type: condition.condition_type.clone(),
                         operator: condition.operator.clone(),
@@ -1507,7 +1542,10 @@ impl EnforcementEngine {
                 invalid_details.replacen("{}", &pattern, 1)
             }
         } else {
-            format!("Payload did not satisfy {} regex pattern requirements", pattern_label)
+            format!(
+                "Payload did not satisfy {} regex pattern requirements",
+                pattern_label
+            )
         };
 
         Ok(DeterministicConditionResultPayload {
@@ -1537,7 +1575,11 @@ impl EnforcementEngine {
                 details: "No payload_text was provided".to_string(),
             });
         };
-        let Some(patterns) = condition.parameters.get("patterns").and_then(|v| v.as_array()) else {
+        let Some(patterns) = condition
+            .parameters
+            .get("patterns")
+            .and_then(|v| v.as_array())
+        else {
             return Ok(DeterministicConditionResultPayload {
                 condition_type: condition.condition_type.clone(),
                 operator: condition.operator.clone(),
@@ -1602,7 +1644,11 @@ impl EnforcementEngine {
                 details: "No payload_bytes was provided".to_string(),
             };
         };
-        let Some(max_size) = condition.parameters.get("max_size_bytes").and_then(|v| v.as_u64()) else {
+        let Some(max_size) = condition
+            .parameters
+            .get("max_size_bytes")
+            .and_then(|v| v.as_u64())
+        else {
             return DeterministicConditionResultPayload {
                 condition_type: condition.condition_type.clone(),
                 operator: condition.operator.clone(),
@@ -1627,7 +1673,10 @@ impl EnforcementEngine {
             target_field: Some("payload_bytes".to_string()),
             actual_value: Some(json!(actual_size)),
             expected_value: Some(json!(max_size)),
-            details: format!("payload_bytes={} compared against max_size_bytes={}", actual_size, max_size),
+            details: format!(
+                "payload_bytes={} compared against max_size_bytes={}",
+                actual_size, max_size
+            ),
         }
     }
 
@@ -1647,7 +1696,11 @@ impl EnforcementEngine {
                 details: "No tool_name was provided".to_string(),
             };
         };
-        let Some(allowed_tools) = condition.parameters.get("allowed_tools").and_then(|v| v.as_array()) else {
+        let Some(allowed_tools) = condition
+            .parameters
+            .get("allowed_tools")
+            .and_then(|v| v.as_array())
+        else {
             return DeterministicConditionResultPayload {
                 condition_type: condition.condition_type.clone(),
                 operator: condition.operator.clone(),
@@ -1671,9 +1724,15 @@ impl EnforcementEngine {
         };
 
         let details = if passed {
-            format!("tool_name='{}' satisfied tool allowlist constraint", tool_name)
+            format!(
+                "tool_name='{}' satisfied tool allowlist constraint",
+                tool_name
+            )
         } else {
-            format!("tool_name='{}' did not satisfy configured tool allowlist", tool_name)
+            format!(
+                "tool_name='{}' did not satisfy configured tool allowlist",
+                tool_name
+            )
         };
 
         DeterministicConditionResultPayload {
@@ -1692,9 +1751,12 @@ impl EnforcementEngine {
         condition: &DeterministicConditionPayload,
         intent: &IntentEvent,
     ) -> DeterministicConditionResultPayload {
-        let actual_count = intent
-            .tool_call_count
-            .or_else(|| intent.rate_limit_context.as_ref().map(|ctx| ctx.call_count as u64));
+        let actual_count = intent.tool_call_count.or_else(|| {
+            intent
+                .rate_limit_context
+                .as_ref()
+                .map(|ctx| ctx.call_count as u64)
+        });
 
         let Some(actual_count) = actual_count else {
             return DeterministicConditionResultPayload {
@@ -1707,7 +1769,11 @@ impl EnforcementEngine {
                 details: "No tool_call_count was provided".to_string(),
             };
         };
-        let Some(max_requests) = condition.parameters.get("max_requests").and_then(|v| v.as_u64()) else {
+        let Some(max_requests) = condition
+            .parameters
+            .get("max_requests")
+            .and_then(|v| v.as_u64())
+        else {
             return DeterministicConditionResultPayload {
                 condition_type: condition.condition_type.clone(),
                 operator: condition.operator.clone(),
@@ -1757,7 +1823,11 @@ impl EnforcementEngine {
                 details: "No tool_name was provided".to_string(),
             };
         };
-        let Some(dangerous_actions) = condition.parameters.get("dangerous_actions").and_then(|v| v.as_object()) else {
+        let Some(dangerous_actions) = condition
+            .parameters
+            .get("dangerous_actions")
+            .and_then(|v| v.as_object())
+        else {
             return DeterministicConditionResultPayload {
                 condition_type: condition.condition_type.clone(),
                 operator: condition.operator.clone(),
@@ -1777,7 +1847,10 @@ impl EnforcementEngine {
                 target_field: Some("tool_params".to_string()),
                 actual_value: intent.tool_params.clone(),
                 expected_value: Some(condition.parameters.clone()),
-                details: format!("No dangerous action rules were configured for tool '{}'", tool_name),
+                details: format!(
+                    "No dangerous action rules were configured for tool '{}'",
+                    tool_name
+                ),
             };
         };
 
@@ -1849,7 +1922,11 @@ impl EnforcementEngine {
                 details: "No input_token_count was provided".to_string(),
             };
         };
-        let Some(max_tokens) = condition.parameters.get("max_tokens").and_then(|v| v.as_u64()) else {
+        let Some(max_tokens) = condition
+            .parameters
+            .get("max_tokens")
+            .and_then(|v| v.as_u64())
+        else {
             return DeterministicConditionResultPayload {
                 condition_type: condition.condition_type.clone(),
                 operator: condition.operator.clone(),
@@ -2003,7 +2080,11 @@ impl EnforcementEngine {
                 details: "No record_count was provided".to_string(),
             };
         };
-        let Some(max_records) = condition.parameters.get("max_records").and_then(|v| v.as_u64()) else {
+        let Some(max_records) = condition
+            .parameters
+            .get("max_records")
+            .and_then(|v| v.as_u64())
+        else {
             return DeterministicConditionResultPayload {
                 condition_type: condition.condition_type.clone(),
                 operator: condition.operator.clone(),
@@ -2028,7 +2109,10 @@ impl EnforcementEngine {
             target_field: Some("record_count".to_string()),
             actual_value: Some(json!(actual_count)),
             expected_value: Some(json!(max_records)),
-            details: format!("record_count={} compared against max_records={}", actual_count, max_records),
+            details: format!(
+                "record_count={} compared against max_records={}",
+                actual_count, max_records
+            ),
         }
     }
 
@@ -2048,7 +2132,11 @@ impl EnforcementEngine {
                 details: "No output_channel was provided".to_string(),
             };
         };
-        let Some(blocked_channels) = condition.parameters.get("blocked_channels").and_then(|v| v.as_array()) else {
+        let Some(blocked_channels) = condition
+            .parameters
+            .get("blocked_channels")
+            .and_then(|v| v.as_array())
+        else {
             return DeterministicConditionResultPayload {
                 condition_type: condition.condition_type.clone(),
                 operator: condition.operator.clone(),
@@ -2073,7 +2161,10 @@ impl EnforcementEngine {
             target_field: Some("output_channel".to_string()),
             actual_value: Some(json!(channel)),
             expected_value: Some(json!(blocked_channels)),
-            details: format!("output_channel='{}' checked against blocked channel list", channel),
+            details: format!(
+                "output_channel='{}' checked against blocked channel list",
+                channel
+            ),
         }
     }
 
@@ -2082,7 +2173,11 @@ impl EnforcementEngine {
         condition: &DeterministicConditionPayload,
         intent: &IntentEvent,
     ) -> DeterministicConditionResultPayload {
-        let Some(allowed) = condition.parameters.get("allowed_classifications").and_then(|v| v.as_array()) else {
+        let Some(allowed) = condition
+            .parameters
+            .get("allowed_classifications")
+            .and_then(|v| v.as_array())
+        else {
             return DeterministicConditionResultPayload {
                 condition_type: condition.condition_type.clone(),
                 operator: condition.operator.clone(),
@@ -2094,7 +2189,8 @@ impl EnforcementEngine {
             };
         };
 
-        let allowed_set: HashSet<&str> = allowed.iter().filter_map(|value| value.as_str()).collect();
+        let allowed_set: HashSet<&str> =
+            allowed.iter().filter_map(|value| value.as_str()).collect();
         let passed = !intent.data.sensitivity.is_empty()
             && intent
                 .data
@@ -2118,7 +2214,11 @@ impl EnforcementEngine {
         condition: &DeterministicConditionPayload,
         intent: &IntentEvent,
     ) -> DeterministicConditionResultPayload {
-        if let Some(max_records) = condition.parameters.get("max_records").and_then(|v| v.as_u64()) {
+        if let Some(max_records) = condition
+            .parameters
+            .get("max_records")
+            .and_then(|v| v.as_u64())
+        {
             if let Some(actual_count) = intent.data.record_count {
                 let passed = match condition.operator.as_str() {
                     "less_than" => actual_count < max_records,
@@ -2132,7 +2232,8 @@ impl EnforcementEngine {
                     target_field: Some("record_count".to_string()),
                     actual_value: Some(json!(actual_count)),
                     expected_value: Some(json!(max_records)),
-                    details: "Aggregation limit currently evaluates against record_count only".to_string(),
+                    details: "Aggregation limit currently evaluates against record_count only"
+                        .to_string(),
                 };
             }
         }
@@ -2144,7 +2245,8 @@ impl EnforcementEngine {
             target_field: Some("record_count".to_string()),
             actual_value: intent.data.record_count.map(|value| json!(value)),
             expected_value: Some(condition.parameters.clone()),
-            details: "Aggregation limit could not be evaluated from the provided intent".to_string(),
+            details: "Aggregation limit could not be evaluated from the provided intent"
+                .to_string(),
         }
     }
 
@@ -2178,9 +2280,12 @@ impl EnforcementEngine {
         let has_semantic = evidence
             .iter()
             .any(|ev| matches!(ev.evaluation_mode.as_str(), "semantic" | "hybrid"));
-        let has_deterministic = evidence
-            .iter()
-            .any(|ev| matches!(ev.evaluation_mode.as_str(), "deterministic" | "hybrid" | "network"));
+        let has_deterministic = evidence.iter().any(|ev| {
+            matches!(
+                ev.evaluation_mode.as_str(),
+                "deterministic" | "hybrid" | "network"
+            )
+        });
         let all_network = evidence.iter().all(|ev| ev.evaluation_mode == "network");
 
         if all_network {
@@ -2242,12 +2347,7 @@ impl EnforcementEngine {
             let mut thresholds = DEFAULT_THRESHOLDS;
             if let Some(Value::String(threshold_str)) = map.get("thresholds") {
                 if let Ok(decoded) = serde_json::from_str::<SliceThresholdsPayload>(threshold_str) {
-                    thresholds = [
-                        decoded.action,
-                        decoded.resource,
-                        decoded.data,
-                        decoded.risk,
-                    ];
+                    thresholds = [decoded.action, decoded.resource, decoded.data, decoded.risk];
                 }
             }
 

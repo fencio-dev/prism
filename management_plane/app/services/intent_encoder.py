@@ -24,14 +24,15 @@ Example:
     vector = encoder.encode(canonical_intent)  # Returns np.ndarray of shape (128,)
 """
 
-import logging
+from fencio_logger import get_logger
+
 import numpy as np
 
 from app.models import IntentEvent
 from app.services.semantic_encoder import SemanticEncoder
 from app.services.param_canonicalizer import canonicalize_params
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__, service_name="prism")
 
 
 class IntentEncoder(SemanticEncoder):

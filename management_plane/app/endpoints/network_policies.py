@@ -6,7 +6,8 @@ deterministic API endpoint whitelists that are evaluated BEFORE
 semantic policies for fast, fail-closed enforcement.
 """
 
-import logging
+from fencio_logger import get_logger
+
 import time
 import uuid
 from typing import Literal
@@ -17,7 +18,7 @@ from pydantic import BaseModel, Field
 from app.models import NetworkEndpointRule, NetworkPolicy
 from app.services import network_policies as network_policy_service
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__, service_name="prism")
 
 router = APIRouter(prefix="/api/v2/network-policies", tags=["network-policies"])
 
