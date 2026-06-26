@@ -25,9 +25,10 @@ class DbInfraClient:
         payload: dict[str, Any] | None = None,
         params: dict[str, Any] | None = None,
         allow_not_found: bool = False,
+        service_scope: str = "prism_management",
     ) -> dict[str, Any]:
         headers = {
-            "X-DB-Infra-Service": "prism_management",
+            "X-DB-Infra-Service": service_scope,
             "Accept": "application/json",
         }
         with httpx.Client(base_url=self._base_url, timeout=self._timeout_seconds) as client:
@@ -57,6 +58,14 @@ class DbInfraClient:
         return self._request_json(
             "GET",
             f"/api/v1/platform/module-enablement/{module_name}",
+        )
+
+    def get_prism_agent_integration(self, platform_agent_id: str) -> dict[str, Any]:
+        return self._request_json(
+            "GET",
+            f"/api/v1/policy-engine/prism-integrations/{platform_agent_id}",
+            allow_not_found=True,
+            service_scope="policy_engine",
         )
 
     def validate_runtime_credential(self, api_key: str) -> dict[str, Any]:

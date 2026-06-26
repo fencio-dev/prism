@@ -15,10 +15,14 @@ RUN set -eux; \
     fi; \
     apt-get update && \
     apt-get install -y --no-install-recommends \
+    clang \
     protobuf-compiler \
     pkg-config \
     libssl-dev \
     && rm -rf /var/lib/apt/lists/*
+
+ENV CC=clang \
+    CFLAGS=-O1
 
 COPY prism/data_plane/ /src/prism/data_plane/
 COPY utils/rust/logger/ /src/utils/rust/logger/

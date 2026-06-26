@@ -45,6 +45,21 @@ logger = get_logger(__name__, service_name="prism")
 router = APIRouter(prefix="", tags=["enforcement-v2"])
 
 
+def _allow_without_enforcement(reason: str) -> EnforcementResponse:
+    return EnforcementResponse(
+        decision="ALLOW",
+        modified_params=None,
+        drift_score=0.0,
+        baseline_drift_score=None,
+        drift_source="none",
+        drift_triggered=False,
+        slice_similarities=[1.0, 1.0, 1.0, 1.0],
+        evidence=[],
+        evaluation_mode="unknown",
+        reason=reason,
+    )
+
+
 def _extract_bearer_token(value: str | None) -> str | None:
     if not value:
         return None
@@ -340,18 +355,7 @@ async def enforce_v2(
         prism_enablement = db_infra_client.get_module_enablement("prism")
         if not prism_enablement.get("enabled", False):
             logger.info("Prism disabled. Allowing request %s without enforcement.", request_id)
-            return EnforcementResponse(
-                decision="ALLOW",
-                modified_params=None,
-                drift_score=0.0,
-                baseline_drift_score=None,
-                drift_source="none",
-                drift_triggered=False,
-                slice_similarities=[1.0, 1.0, 1.0, 1.0],
-                evidence=[],
-                evaluation_mode="unknown",
-                reason="Prism disabled",
-            )
+            return _allow_without_enforcement("Prism module is disabled")
     except DbInfraClientError as exc:
         logger.warning("Failed to read Prism enablement, continuing enforcement: %s", exc)
 
@@ -367,6 +371,31 @@ async def enforce_v2(
         x_prism_integration_agent_ref=x_prism_integration_agent_ref,
         x_prism_endpoint_fingerprint=x_prism_endpoint_fingerprint,
     )
+
+    if agent_id:
+        try:
+            integration = db_infra_client.get_prism_agent_integration(agent_id)
+        except DbInfraClientError as exc:
+            logger.warning(
+                "Failed to read Prism integration for agent %s, continuing enforcement: %s",
+                agent_id,
+                exc,
+            )
+            integration = {}
+        if not integration:
+            logger.info(
+                "Prism integration missing for agent %s. Allowing request %s without enforcement.",
+                agent_id,
+                request_id,
+            )
+            return _allow_without_enforcement("Prism is not enabled for this agent")
+        if not bool(integration.get("enabled")):
+            logger.info(
+                "Prism integration disabled for agent %s. Allowing request %s without enforcement.",
+                agent_id,
+                request_id,
+            )
+            return _allow_without_enforcement("Prism is disabled for this agent")
 
     logger.info(
         "V2 enforce request: %s, op=%s, t=%s, agent_id=%s, "
