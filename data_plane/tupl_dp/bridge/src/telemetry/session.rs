@@ -87,7 +87,11 @@ pub enum SessionEvent {
     },
 
     /// No rules found (fail-closed)
-    NoRulesFound { timestamp_us: u64, layer: String },
+    NoRulesFound {
+        timestamp_us: u64,
+        layer: String,
+        reason: Option<String>,
+    },
 
     /// Rule evaluation started
     RuleEvaluationStarted {

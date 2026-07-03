@@ -81,6 +81,11 @@ pub struct IntentEvent {
     pub tool_name: Option<String>,
     pub tool_method: Option<String>,
     pub tool_params: Option<Value>,
+    pub rag_source_id: Option<String>,
+    pub rag_source_name: Option<String>,
+    pub resource_identity_type: Option<String>,
+    pub resource_identity_key: Option<String>,
+    pub resource_identity_name: Option<String>,
     pub rate_limit_context: Option<RateLimitContext>,
 }
 

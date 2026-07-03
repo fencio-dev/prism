@@ -101,7 +101,7 @@ def query_calls(
     limit: int = Query(50, le=200),
     offset: int = Query(0),
     agent_id: str | None = Query(None),
-    session_id: str | None = Query(None),
+    agent_call_id: str | None = Query(None),
     decision: str | None = Query(None),
     start_ms: int | None = Query(None),
     end_ms: int | None = Query(None),
@@ -111,7 +111,7 @@ def query_calls(
         limit=limit,
         offset=offset,
         agent_id=agent_id,
-        session_id=session_id,
+        agent_call_id=agent_call_id,
         decision=decision,
         start_ms=start_ms,
         end_ms=end_ms,
@@ -164,20 +164,20 @@ def delete_calls():
     return {"deleted_count": deleted}
 
 
-@router.patch("/telemetry/calls/{call_id}/enforced-decision")
-def update_enforced_decision(call_id: str, payload: dict[str, str]):
+@router.patch("/telemetry/calls/{event_id}/enforced-decision")
+def update_enforced_decision(event_id: str, payload: dict[str, str]):
     enforced_decision = (payload.get("enforced_decision") or "").upper()
     if enforced_decision not in {"ALLOW", "DENY", "MODIFY", "STEP_UP", "DEFER"}:
         raise HTTPException(status_code=400, detail="Invalid enforced decision")
-    session_store.update_call_enforced_decision(call_id, enforced_decision)
+    session_store.update_call_enforced_decision(event_id, enforced_decision)
     return {"ok": True}
 
 
-@router.get("/telemetry/calls/{call_id}", response_model=CallDetailWithIntentEvent)
+@router.get("/telemetry/calls/{event_id}", response_model=CallDetailWithIntentEvent)
 def get_call_detail(
-    call_id: str,
+    event_id: str,
 ):
-    row = session_store.get_call(call_id)
+    row = session_store.get_call(event_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Call not found")
 
@@ -186,15 +186,19 @@ def get_call_detail(
         intent_event = json.loads(row["intent_event"])
 
     call = CallSummaryWithIntentEvent(
-        call_id=row["call_id"],
+        event_id=row["event_id"],
+        agent_call_id=row["agent_call_id"],
         agent_id=row["agent_id"],
-        session_id=row.get("session_id"),
         ts_ms=row["ts_ms"],
         decision=row["enforced_decision"],
         prism_decision=row["prism_decision"],
         enforced_decision=row["enforced_decision"],
         op=row.get("op"),
         t=row.get("t"),
+        source_agent=row.get("source_agent"),
+        source_layer=row.get("source_layer"),
+        destination_agent=row.get("destination_agent"),
+        destination_layer=row.get("destination_layer"),
         is_dry_run=bool(row.get("is_dry_run")),
         intent_event=intent_event,
     )

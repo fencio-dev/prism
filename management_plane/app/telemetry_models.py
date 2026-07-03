@@ -17,7 +17,7 @@ class SessionSummary(BaseModel):
     
     Example:
         {
-            "session_id": "session_001",
+            "agent_call_id": "call_001",
             "agent_id": "agent_123",
             "tenant_id": "tenant_abc",
             "layer": "L4",
@@ -28,7 +28,7 @@ class SessionSummary(BaseModel):
             "intent_summary": "web_search"
         }
     """
-    session_id: str = Field(..., description="Unique session identifier")
+    session_id: str = Field(..., description="Legacy data-plane session identifier")
     agent_id: str = Field(..., description="Agent that triggered enforcement")
     tenant_id: str = Field(..., description="Tenant ID")
     layer: str = Field(..., description="Layer (L0-L6)")
@@ -86,7 +86,7 @@ class CallSummary(BaseModel):
 
     Example:
         {
-            "call_id": "abc123",
+            "event_id": "evt_123",
             "agent_id": "agent_1",
             "ts_ms": 1700000000000,
             "decision": "ALLOW",
@@ -94,18 +94,25 @@ class CallSummary(BaseModel):
             "t": "web_search"
         }
     """
-    call_id: str = Field(..., description="Unique call identifier")
+    event_id: str = Field(..., description="Unique enforcement event identifier")
+    agent_call_id: str = Field(..., description="Parent agent call identifier")
     agent_id: str = Field(..., description="Agent that triggered the call")
-    session_id: Optional[str] = Field(
-        None,
-        description="Runtime session identifier for grouping calls into runs",
-    )
     ts_ms: int = Field(..., description="Unix timestamp in milliseconds")
     decision: str = Field(..., description="Proxy-enforced decision")
     prism_decision: str = Field(..., description="Raw Prism verdict")
     enforced_decision: str = Field(..., description="Proxy-enforced decision")
     op: Optional[str] = Field(None, description="Operation type")
     t: Optional[str] = Field(None, description="Tool name or action type")
+    source_agent: Optional[str] = Field(None, description="Source agent for the intercepted path")
+    source_layer: Optional[str] = Field(None, description="Source Prism layer for the intercepted path")
+    destination_agent: Optional[str] = Field(None, description="Destination agent for the intercepted path")
+    destination_layer: Optional[str] = Field(None, description="Destination Prism layer for the intercepted path")
+    tool_name: Optional[str] = Field(None, description="Runtime tool identity")
+    rag_source_id: Optional[str] = Field(None, description="Runtime RAG source identity")
+    rag_source_name: Optional[str] = Field(None, description="Runtime RAG source display name")
+    resource_identity_type: Optional[str] = Field(None, description="Generic runtime resource identity type")
+    resource_identity_key: Optional[str] = Field(None, description="Generic runtime resource identity key")
+    resource_identity_name: Optional[str] = Field(None, description="Generic runtime resource display name")
     is_dry_run: bool = Field(False, description="Whether this was a dry-run call")
 
 
@@ -143,10 +150,10 @@ class CallDetail(BaseModel):
 
 class TelemetryRunSummary(BaseModel):
     """
-    Summary of a runtime enforcement run grouped by session_id.
+    Summary of one protected agent call grouped by agent_call_id.
     """
 
-    session_id: str = Field(..., description="Runtime session identifier")
+    agent_call_id: str = Field(..., description="Parent identifier for one agent request")
     agent_id: str = Field(..., description="Agent that produced the run")
     started_at_ms: int = Field(..., description="First call timestamp in milliseconds")
     last_seen_at_ms: int = Field(..., description="Most recent call timestamp in milliseconds")
@@ -176,7 +183,7 @@ class TelemetryRunSummary(BaseModel):
 
 class TelemetryRunsResponse(BaseModel):
     """
-    Paginated runtime run summaries grouped by session_id.
+    Paginated runtime run summaries grouped by agent_call_id.
     """
 
     runs: list[TelemetryRunSummary] = Field(..., description="List of runtime runs")

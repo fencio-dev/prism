@@ -66,7 +66,9 @@ class DataPlaneClient:
             context_payload["dry_run_rule_ids"] = intent.dry_run_rule_ids
         layer = intent.destination_layer or intent.source_layer or ""
         return json.dumps({
-            "id": intent.id,
+            "id": intent.event_id or intent.id,
+            "event_id": intent.event_id or intent.id,
+            "agent_call_id": intent.agent_call_id,
             "schemaVersion": "v1.3",
             "tenantId": intent.tenant_id or "",
             "timestamp": intent.ts,
@@ -100,6 +102,11 @@ class DataPlaneClient:
             "tool_name": intent.tool_name,
             "tool_method": intent.tool_method,
             "tool_params": intent.tool_params or intent.params,
+            "rag_source_id": intent.rag_source_id,
+            "rag_source_name": intent.rag_source_name,
+            "resource_identity_type": intent.resource_identity_type,
+            "resource_identity_key": intent.resource_identity_key,
+            "resource_identity_name": intent.resource_identity_name,
         })
 
     def enforce(
@@ -108,7 +115,7 @@ class DataPlaneClient:
         intent_vector: Optional[List[float]] = None,
         request_id: str = "",
         drift_score: float = 0.0,
-        session_id: str = "",
+        agent_call_id: str = "",
     ) -> ComparisonResult:
         """Enforce rules against an IntentEvent."""
         try:
@@ -121,7 +128,7 @@ class DataPlaneClient:
             intent_vector=intent_vector or [],
             request_id=request_id,
             drift_score=drift_score,
-            session_id=session_id,
+            session_id=agent_call_id,
         )
 
         metadata = []

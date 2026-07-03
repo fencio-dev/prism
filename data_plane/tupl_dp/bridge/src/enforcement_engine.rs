@@ -46,7 +46,7 @@ struct SliceThresholdsPayload {
     risk: f32,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 struct ConnectionMatchPayload {
     source_agent: String,
     source_layer: String,
@@ -75,9 +75,14 @@ struct ConnectionEvaluationPayload {
     source_layer: String,
     destination_agent: String,
     destination_layer: String,
+    intent_source_agent: Option<String>,
+    intent_source_layer: Option<String>,
+    intent_destination_agent: Option<String>,
+    intent_destination_layer: Option<String>,
     policy_mode: String,
     policy_type: String,
     policy_effect: String,
+    reason: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -149,6 +154,33 @@ pub struct EnforcementResult {
     pub reason: String,
 }
 
+struct RuleQueryResult {
+    rules: Vec<Arc<dyn RuleInstance>>,
+    candidate_count: usize,
+    skipped: Vec<RuleConnectionSkip>,
+    invalid: Vec<RuleConnectionSkip>,
+}
+
+struct RuleConnectionSkip {
+    rule_id: String,
+    rule_name: String,
+    reason: String,
+    connection_result_json: String,
+}
+
+struct RuleConnectionCheck {
+    matched: bool,
+    invalid_policy_edge: bool,
+    reason: String,
+    connection_result_json: String,
+}
+
+struct RuleEvaluationOutcome {
+    comparison: ComparisonResult,
+    policy_drift_score: f32,
+    guard_triggered: bool,
+}
+
 /// Evidence from a single rule evaluation
 #[derive(Debug, Clone)]
 pub struct RuleEvidence {
@@ -200,6 +232,116 @@ impl EnforcementEngine {
             })])
             .unwrap_or_else(|_| "[]".to_string()),
         }
+    }
+
+    fn evidence_has_guard_veto(evidence: &[RuleEvidence]) -> bool {
+        evidence.iter().any(|item| {
+            serde_json::from_str::<Value>(&item.semantic_results_json)
+                .ok()
+                .and_then(|value| value.as_array().cloned())
+                .map(|results| {
+                    results.iter().any(|result| {
+                        result
+                            .get("actual_value")
+                            .and_then(|actual| actual.get("guard_triggered"))
+                            .and_then(|value| value.as_bool())
+                            .unwrap_or(false)
+                    })
+                })
+                .unwrap_or(false)
+        })
+    }
+
+    fn build_connection_fail_closed_evidence(
+        rule_id: &str,
+        rule_name: &str,
+        details: &str,
+        connection_result_json: String,
+        semantic_details: Value,
+    ) -> RuleEvidence {
+        RuleEvidence {
+            rule_id: rule_id.to_string(),
+            rule_name: rule_name.to_string(),
+            decision: 0,
+            similarities: [0.0; 4],
+            triggering_slice: "connection".to_string(),
+            anchor_matched: details.to_string(),
+            thresholds: [0.0; 4],
+            scoring_mode: "exact".to_string(),
+            evaluation_mode: "connection".to_string(),
+            connection_result_json,
+            deterministic_results_json: "[]".to_string(),
+            semantic_results_json: serde_json::to_string(&vec![semantic_details])
+                .unwrap_or_else(|_| "[]".to_string()),
+        }
+    }
+
+    fn normalize_edge_value(value: &Option<String>) -> Option<String> {
+        value
+            .as_ref()
+            .map(|item| item.trim())
+            .filter(|item| !item.is_empty())
+            .map(|item| item.to_string())
+    }
+
+    fn missing_intent_edge_fields(intent: &IntentEvent) -> Vec<&'static str> {
+        let mut missing = Vec::new();
+        if Self::normalize_edge_value(&intent.source_agent).is_none() {
+            missing.push("source_agent");
+        }
+        if Self::normalize_edge_value(&intent.source_layer).is_none() {
+            missing.push("source_layer");
+        }
+        if Self::normalize_edge_value(&intent.destination_agent).is_none() {
+            missing.push("destination_agent");
+        }
+        if Self::normalize_edge_value(&intent.destination_layer).is_none() {
+            missing.push("destination_layer");
+        }
+        missing
+    }
+
+    fn intent_connection_json(intent: &IntentEvent, reason: &str) -> String {
+        serde_json::to_string(&json!({
+            "matched": false,
+            "policy_effect": "deny",
+            "policy_type": "connection_required",
+            "policy_mode": "Enforce",
+            "reason": reason,
+            "intent_source_agent": Self::normalize_edge_value(&intent.source_agent),
+            "intent_source_layer": Self::normalize_edge_value(&intent.source_layer),
+            "intent_destination_agent": Self::normalize_edge_value(&intent.destination_agent),
+            "intent_destination_layer": Self::normalize_edge_value(&intent.destination_layer),
+        }))
+        .unwrap_or_default()
+    }
+
+    fn connection_missing_evidence(intent: &IntentEvent, missing: &[&'static str]) -> RuleEvidence {
+        let details = format!(
+            "Intent is missing required Prism edge field(s): {}. Prism requires source_agent, source_layer, destination_agent, and destination_layer for policy matching; denied fail-closed.",
+            missing.join(", ")
+        );
+        Self::build_connection_fail_closed_evidence(
+            "missing-intent-edge",
+            "Missing Prism Intent Edge",
+            &details,
+            Self::intent_connection_json(intent, &details),
+            json!({
+                "condition_type": "connection_match",
+                "operator": "required_intent_edge_fields_present",
+                "passed": false,
+                "target_field": "source_agent/source_layer/destination_agent/destination_layer",
+                "expected_value": ["source_agent", "source_layer", "destination_agent", "destination_layer"],
+                "actual_value": {
+                    "source_agent": Self::normalize_edge_value(&intent.source_agent),
+                    "source_layer": Self::normalize_edge_value(&intent.source_layer),
+                    "destination_agent": Self::normalize_edge_value(&intent.destination_agent),
+                    "destination_layer": Self::normalize_edge_value(&intent.destination_layer),
+                },
+                "missing_fields": missing,
+                "details": details,
+            }),
+        )
     }
 
     fn endpoint(&self, path: &str) -> String {
@@ -292,35 +434,20 @@ impl EnforcementEngine {
             });
         }
 
-        // 1. Query rules for this layer from Bridge using exact path filtering first
-        let query_start = Instant::now();
-        let dry_run_rule_ids = Self::extract_dry_run_rule_ids(intent.context.as_ref());
-        let rules = self.get_rules_for_layer(
-            layer,
-            &actor_id,
-            &tenant_id,
-            &intent,
-            dry_run_rule_ids.as_ref(),
-        )?;
-        let query_duration = query_start.elapsed().as_micros() as u64;
-
-        if rules.is_empty() {
-            // No rules = fail-closed (BLOCK)
+        let missing_edge_fields = Self::missing_intent_edge_fields(&intent);
+        if !missing_edge_fields.is_empty() {
             let reason = format!(
-                "No policies are configured for layer {}; Prism denied the intent by default.",
-                layer
+                "Intent is missing required Prism edge field(s): {}. Prism denied the intent fail-closed before policy evaluation.",
+                missing_edge_fields.join(", ")
             );
-            log::info!(
-                "No rules configured for layer {}, blocking by default",
-                layer
-            );
+            log::warn!("{}", reason);
 
-            // Record no rules found
             if let (Some(ref telemetry), Some(ref sid)) = (&self.telemetry, &session_id) {
                 telemetry.with_session(sid, |session| {
                     session.add_event(SessionEvent::NoRulesFound {
                         timestamp_us: EnforcementSession::timestamp_us(),
                         layer: layer.to_string(),
+                        reason: Some(reason.clone()),
                     });
                 });
 
@@ -332,10 +459,9 @@ impl EnforcementEngine {
                 decision: 0,
                 slice_similarities: [0.0; 4],
                 rules_evaluated: 0,
-                evidence: vec![Self::build_fail_closed_evidence(
-                    "implicit-default-deny",
-                    "Implicit Default Deny",
-                    &reason,
+                evidence: vec![Self::connection_missing_evidence(
+                    &intent,
+                    &missing_edge_fields,
                 )],
                 session_id: session_id.clone().unwrap_or_else(|| request_id.to_string()),
                 enforcement_decision: Some(EnforcementDecision {
@@ -343,7 +469,167 @@ impl EnforcementEngine {
                     modified_params: None,
                     drift_triggered: false,
                 }),
-                evaluation_mode: "semantic".to_string(),
+                evaluation_mode: "connection".to_string(),
+                reason,
+            });
+        }
+
+        // 1. Query rules for this layer from Bridge using exact path filtering first
+        let query_start = Instant::now();
+        let dry_run_rule_ids = Self::extract_dry_run_rule_ids(intent.context.as_ref());
+        let rule_query = self.get_rules_for_layer(
+            layer,
+            &actor_id,
+            &tenant_id,
+            &intent,
+            dry_run_rule_ids.as_ref(),
+        )?;
+        if !rule_query.invalid.is_empty() {
+            let reason = format!(
+                "{} active policy candidate(s) for layer {} have missing or invalid Prism edge metadata; Prism denied the intent fail-closed.",
+                rule_query.invalid.len(),
+                layer
+            );
+            log::warn!("{}", reason);
+
+            if let (Some(ref telemetry), Some(ref sid)) = (&self.telemetry, &session_id) {
+                telemetry.with_session(sid, |session| {
+                    session.add_event(SessionEvent::Error {
+                        timestamp_us: EnforcementSession::timestamp_us(),
+                        error: reason.clone(),
+                        fail_closed: true,
+                    });
+                });
+
+                let total_duration = session_start.elapsed().as_micros() as u64;
+                telemetry.complete_session(sid, 0, total_duration).ok();
+            }
+
+            return Ok(EnforcementResult {
+                decision: 0,
+                slice_similarities: [0.0; 4],
+                rules_evaluated: 0,
+                evidence: vec![Self::build_connection_fail_closed_evidence(
+                    "invalid-policy-edge",
+                    "Invalid Prism Policy Edge",
+                    &reason,
+                    Self::intent_connection_json(&intent, &reason),
+                    json!({
+                        "condition_type": "connection_match",
+                        "operator": "required_policy_edge_fields_present",
+                        "passed": false,
+                        "target_field": "connection_match.source_agent/source_layer/destination_agent/destination_layer",
+                        "expected_value": ["source_agent", "source_layer", "destination_agent", "destination_layer"],
+                        "actual_value": null,
+                        "invalid_policy_count": rule_query.invalid.len(),
+                        "invalid_policies": rule_query.invalid.iter().map(|item| json!({
+                            "rule_id": item.rule_id.clone(),
+                            "rule_name": item.rule_name.clone(),
+                            "reason": item.reason.clone(),
+                            "connection_result": serde_json::from_str::<Value>(&item.connection_result_json).unwrap_or_else(|_| json!({})),
+                        })).collect::<Vec<Value>>(),
+                        "details": reason,
+                    }),
+                )],
+                session_id: session_id.clone().unwrap_or_else(|| request_id.to_string()),
+                enforcement_decision: Some(EnforcementDecision {
+                    decision: Decision::Deny,
+                    modified_params: None,
+                    drift_triggered: false,
+                }),
+                evaluation_mode: "connection".to_string(),
+                reason,
+            });
+        }
+        let rules = rule_query.rules;
+        let query_duration = query_start.elapsed().as_micros() as u64;
+
+        if rules.is_empty() {
+            // No rules = fail-closed (BLOCK)
+            let reason = if rule_query.candidate_count == 0 {
+                format!(
+                    "No active policies are configured for layer {}; Prism denied the intent by default.",
+                    layer
+                )
+            } else {
+                format!(
+                    "No active policies matched Prism edge {}:{} -> {}:{} on layer {}; Prism denied the intent fail-closed.",
+                    Self::normalize_edge_value(&intent.source_agent).unwrap_or_default(),
+                    Self::normalize_edge_value(&intent.source_layer).unwrap_or_default(),
+                    Self::normalize_edge_value(&intent.destination_agent).unwrap_or_default(),
+                    Self::normalize_edge_value(&intent.destination_layer).unwrap_or_default(),
+                    layer,
+                )
+            };
+            log::info!(
+                "No edge-matching rules configured for layer {}, blocking by default",
+                layer
+            );
+
+            // Record no rules found
+            if let (Some(ref telemetry), Some(ref sid)) = (&self.telemetry, &session_id) {
+                telemetry.with_session(sid, |session| {
+                    session.add_event(SessionEvent::NoRulesFound {
+                        timestamp_us: EnforcementSession::timestamp_us(),
+                        layer: layer.to_string(),
+                        reason: Some(reason.clone()),
+                    });
+                });
+
+                let total_duration = session_start.elapsed().as_micros() as u64;
+                telemetry.complete_session(sid, 0, total_duration).ok();
+            }
+
+            return Ok(EnforcementResult {
+                decision: 0,
+                slice_similarities: [0.0; 4],
+                rules_evaluated: 0,
+                evidence: vec![if rule_query.candidate_count == 0 {
+                    Self::build_fail_closed_evidence(
+                        "implicit-default-deny",
+                        "Implicit Default Deny",
+                        &reason,
+                    )
+                } else {
+                    Self::build_connection_fail_closed_evidence(
+                        "no-edge-matched-policy",
+                        "No Edge-Matched Prism Policy",
+                        &reason,
+                        Self::intent_connection_json(&intent, &reason),
+                        json!({
+                            "condition_type": "connection_match",
+                            "operator": "exact_source_destination_edge",
+                            "passed": false,
+                            "target_field": "source_agent/source_layer/destination_agent/destination_layer",
+                            "expected_value": "at least one active policy with matching connection_match",
+                            "actual_value": {
+                                "source_agent": Self::normalize_edge_value(&intent.source_agent),
+                                "source_layer": Self::normalize_edge_value(&intent.source_layer),
+                                "destination_agent": Self::normalize_edge_value(&intent.destination_agent),
+                                "destination_layer": Self::normalize_edge_value(&intent.destination_layer),
+                            },
+                            "candidate_policy_count": rule_query.candidate_count,
+                            "skipped_policies": rule_query.skipped.iter().map(|item| json!({
+                                "rule_id": item.rule_id.clone(),
+                                "rule_name": item.rule_name.clone(),
+                                "reason": item.reason.clone(),
+                                "connection_result": serde_json::from_str::<Value>(&item.connection_result_json).unwrap_or_else(|_| json!({})),
+                            })).collect::<Vec<Value>>(),
+                            "details": reason,
+                        }),
+                    )
+                }],
+                session_id: session_id.clone().unwrap_or_else(|| request_id.to_string()),
+                enforcement_decision: Some(EnforcementDecision {
+                    decision: Decision::Deny,
+                    modified_params: None,
+                    drift_triggered: false,
+                }),
+                evaluation_mode: if rule_query.candidate_count == 0 {
+                    "semantic".to_string()
+                } else {
+                    "connection".to_string()
+                },
                 reason,
             });
         }
@@ -366,6 +652,9 @@ impl EnforcementEngine {
         }
 
         // 2. Encode intent only if one of the applicable rules still needs semantic matching.
+        // This includes condition-local semantic guards/allow anchors. Guard-only
+        // policies intentionally have no PolicyMatch anchors, but still require
+        // the payload embedding for semantic condition evaluation.
         let requires_semantic_encoding = rules.iter().any(|rule| self.rule_requires_semantic(rule));
         let encoding_start = Instant::now();
 
@@ -477,10 +766,10 @@ impl EnforcementEngine {
         }
 
         // Helper closure: evaluate a single rule vector comparison and record telemetry.
-        // Returns (ComparisonResult, rule_vector, policy_drift_score) or an Err.
+        // Returns the comparison plus condition-level veto metadata or an Err.
         let evaluate_rule = |rule: &Arc<dyn RuleInstance>,
                              evidence: &mut Vec<RuleEvidence>|
-         -> Result<(ComparisonResult, RuleVector, f32), String> {
+         -> Result<RuleEvaluationOutcome, String> {
             if let (Some(ref telemetry), Some(ref sid)) = (&self.telemetry, &session_id) {
                 telemetry.with_session(sid, |session| {
                     session.add_event(SessionEvent::RuleEvaluationStarted {
@@ -497,31 +786,14 @@ impl EnforcementEngine {
                 .unwrap_or_default();
             let semantic_required = self.rule_vector_requires_semantic(&rule_vector);
             let payload = rule.management_plane_payload();
-            let connection_result =
-                Self::parse_connection_match(&payload).map(|connection_match| {
-                    ConnectionEvaluationPayload {
-                        matched: true,
-                        source_agent: connection_match.source_agent,
-                        source_layer: connection_match.source_layer,
-                        destination_agent: connection_match.destination_agent,
-                        destination_layer: connection_match.destination_layer,
-                        policy_mode: payload
-                            .get("policy_mode")
-                            .and_then(|value| value.as_str())
-                            .unwrap_or("Enforce")
-                            .to_string(),
-                        policy_type: payload
-                            .get("policy_type")
-                            .and_then(|value| value.as_str())
-                            .unwrap_or("context_allow")
-                            .to_string(),
-                        policy_effect: match rule.policy_type() {
-                            PolicyType::Forbidden | PolicyType::ContextDeny => "deny".to_string(),
-                            PolicyType::ContextAllow => "allow".to_string(),
-                            PolicyType::ContextDefer => "defer".to_string(),
-                        },
-                    }
-                });
+            let connection_check = self.rule_connection_check(rule, &intent);
+            if !connection_check.matched {
+                return Err(format!(
+                    "Rule '{}' was selected for evaluation but failed Prism edge matching: {}",
+                    rule.rule_id(),
+                    connection_check.reason
+                ));
+            }
             let (deterministic_passed, deterministic_reason, deterministic_results) =
                 self.evaluate_deterministic_conditions(rule, &intent)?;
             let semantic_conditions = Self::parse_semantic_conditions(&payload)?;
@@ -540,7 +812,8 @@ impl EnforcementEngine {
 
             let weights = self.get_rule_weights(rule);
             let (ev_thresholds, ev_decision_mode) = self.get_rule_thresholds(rule)?;
-            let (cmp, semantic_reason, semantic_results) = if !deterministic_passed {
+            let (cmp, semantic_reason, semantic_results, guard_triggered) = if !deterministic_passed
+            {
                 (
                     ComparisonResult {
                         decision: 0,
@@ -549,6 +822,7 @@ impl EnforcementEngine {
                     },
                     String::new(),
                     Vec::new(),
+                    false,
                 )
             } else if has_semantic_conditions {
                 let vector = intent_vector.ok_or_else(|| {
@@ -557,8 +831,13 @@ impl EnforcementEngine {
                         rule.rule_id()
                     )
                 })?;
-                let (semantic_passed, semantic_reason, semantic_similarities, semantic_results) =
-                    self.evaluate_semantic_conditions(rule, &vector, &rule_vector)?;
+                let (
+                    semantic_passed,
+                    semantic_reason,
+                    semantic_similarities,
+                    semantic_results,
+                    guard_triggered,
+                ) = self.evaluate_semantic_conditions(rule, &vector, &rule_vector)?;
                 (
                     ComparisonResult {
                         decision: if semantic_passed { 1 } else { 0 },
@@ -567,6 +846,7 @@ impl EnforcementEngine {
                     },
                     semantic_reason,
                     semantic_results,
+                    guard_triggered,
                 )
             } else if !semantic_required {
                 (
@@ -577,6 +857,7 @@ impl EnforcementEngine {
                     },
                     String::new(),
                     Vec::new(),
+                    false,
                 )
             } else {
                 let vector = intent_vector.ok_or_else(|| {
@@ -595,6 +876,7 @@ impl EnforcementEngine {
                     )?,
                     String::new(),
                     Vec::new(),
+                    false,
                 )
             };
             let cmp = cmp;
@@ -627,10 +909,9 @@ impl EnforcementEngine {
                 deterministic_reason.clone()
             };
 
-            let mut connection_result_value = connection_result
-                .as_ref()
-                .and_then(|value| serde_json::to_value(value).ok())
-                .unwrap_or_else(|| json!({}));
+            let mut connection_result_value =
+                serde_json::from_str::<Value>(&connection_check.connection_result_json)
+                    .unwrap_or_else(|_| json!({}));
             if let Some(map) = connection_result_value.as_object_mut() {
                 map.insert("policy_drift_score".to_string(), json!(policy_drift_score));
                 map.insert(
@@ -698,7 +979,11 @@ impl EnforcementEngine {
                 });
             }
 
-            Ok((cmp, rule_vector, policy_drift_score))
+            Ok(RuleEvaluationOutcome {
+                comparison: cmp,
+                policy_drift_score,
+                guard_triggered,
+            })
         };
 
         // Helper: record final decision in telemetry and return EnforcementResult.
@@ -732,6 +1017,8 @@ impl EnforcementEngine {
                 Decision::Deny => {
                     if evidence.is_empty() {
                         "No policy evidence was returned; Prism denied the intent.".to_string()
+                    } else if Self::evidence_has_guard_veto(&evidence) {
+                        "A semantic guard condition vetoed the allow policy; Prism denied the intent.".to_string()
                     } else {
                         "No configured policy produced an allow outcome; Prism denied the intent fail-closed.".to_string()
                     }
@@ -770,7 +1057,8 @@ impl EnforcementEngine {
         //   Any match → DENY immediately. Drift is irrelevant.
         // -----------------------------------------------------------------------
         for rule in &forbidden_rules {
-            let (cmp, _, _) = evaluate_rule(rule, &mut evidence)?;
+            let evaluated = evaluate_rule(rule, &mut evidence)?;
+            let cmp = evaluated.comparison;
             if cmp.decision == 1 {
                 log::info!(
                     "DENY (FORBIDDEN): rule '{}' matched — blocking immediately",
@@ -801,7 +1089,9 @@ impl EnforcementEngine {
         //   Match + drift disabled (threshold == 0.0) → DENY, drift_triggered = false.
         // -----------------------------------------------------------------------
         for rule in &context_deny_rules {
-            let (cmp, _, policy_drift_score) = evaluate_rule(rule, &mut evidence)?;
+            let evaluated = evaluate_rule(rule, &mut evidence)?;
+            let cmp = evaluated.comparison;
+            let policy_drift_score = evaluated.policy_drift_score;
             if cmp.decision == 1 {
                 let threshold = rule.drift_threshold();
                 let (drift_triggered, deny) = if threshold > 0.0 {
@@ -846,7 +1136,55 @@ impl EnforcementEngine {
         //   Match otherwise → ALLOW.
         // -----------------------------------------------------------------------
         for rule in &context_allow_rules {
-            let (cmp, _, policy_drift_score) = evaluate_rule(rule, &mut evidence)?;
+            let evaluated = evaluate_rule(rule, &mut evidence)?;
+            let cmp = evaluated.comparison;
+            let policy_drift_score = evaluated.policy_drift_score;
+            if evaluated.guard_triggered {
+                let payload = rule.management_plane_payload();
+                let policy_mode = Self::rule_policy_mode(&payload);
+                let sims = cmp.slice_similarities;
+                if policy_mode.eq_ignore_ascii_case("monitor") {
+                    log::info!(
+                        "ALLOW (MONITOR GUARD): rule '{}' guard triggered but policy is monitor",
+                        rule.rule_id()
+                    );
+                    let ed = EnforcementDecision {
+                        decision: Decision::Allow,
+                        modified_params: None,
+                        drift_triggered: false,
+                    };
+                    return Ok(finish(
+                        evidence,
+                        ed,
+                        sims,
+                        evaluation_start,
+                        session_start,
+                        &self.telemetry,
+                        &session_id,
+                        request_id,
+                    ));
+                }
+
+                log::info!(
+                    "DENY (CONTEXT_ALLOW_GUARD): rule '{}' guard vetoed allow policy",
+                    rule.rule_id()
+                );
+                let ed = EnforcementDecision {
+                    decision: Decision::Deny,
+                    modified_params: None,
+                    drift_triggered: false,
+                };
+                return Ok(finish(
+                    evidence,
+                    ed,
+                    sims,
+                    evaluation_start,
+                    session_start,
+                    &self.telemetry,
+                    &session_id,
+                    request_id,
+                ));
+            }
             if cmp.decision == 1 {
                 let threshold = rule.drift_threshold();
                 let sims = cmp.slice_similarities;
@@ -917,7 +1255,8 @@ impl EnforcementEngine {
         //   Any match → DEFER.
         // -----------------------------------------------------------------------
         for rule in &context_defer_rules {
-            let (cmp, _, _) = evaluate_rule(rule, &mut evidence)?;
+            let evaluated = evaluate_rule(rule, &mut evidence)?;
+            let cmp = evaluated.comparison;
             if cmp.decision == 1 {
                 log::info!("DEFER (CONTEXT_DEFER): rule '{}' matched", rule.rule_id());
                 let ed = EnforcementDecision {
@@ -1013,12 +1352,12 @@ impl EnforcementEngine {
         tenant_id: &str,
         intent: &IntentEvent,
         dry_run_rule_ids: Option<&HashSet<String>>,
-    ) -> Result<Vec<Arc<dyn RuleInstance>>, String> {
+    ) -> Result<RuleQueryResult, String> {
         log::info!("Querying rules for layer: {}", layer);
 
         let requested_layer = if layer.is_empty() { None } else { Some(layer) };
 
-        let mut filtered: Vec<_> = self
+        let candidates: Vec<_> = self
             .bridge
             .all_rules()
             .into_iter()
@@ -1032,19 +1371,188 @@ impl EnforcementEngine {
                 (Some(rule_layer), Some(requested)) => rule_layer == requested,
                 (Some(_), None) => false,
             })
-            .filter(|rule| self.rule_matches_connection(rule, intent))
             .collect();
+
+        let candidate_count = candidates.len();
+        let mut filtered = Vec::new();
+        let mut skipped = Vec::new();
+        let mut invalid = Vec::new();
+
+        for rule in candidates {
+            let check = self.rule_connection_check(&rule, intent);
+            if check.matched {
+                filtered.push(rule);
+            } else if check.invalid_policy_edge {
+                invalid.push(RuleConnectionSkip {
+                    rule_id: rule.rule_id().to_string(),
+                    rule_name: rule.description().unwrap_or("").to_string(),
+                    reason: check.reason,
+                    connection_result_json: check.connection_result_json,
+                });
+            } else {
+                skipped.push(RuleConnectionSkip {
+                    rule_id: rule.rule_id().to_string(),
+                    rule_name: rule.description().unwrap_or("").to_string(),
+                    reason: check.reason,
+                    connection_result_json: check.connection_result_json,
+                });
+            }
+        }
 
         filtered.sort_by(|a, b| b.priority().cmp(&a.priority()));
 
         log::info!(
-            "Found {} rules for layer {} (actor: {}, tenant: {})",
+            "Found {} edge-matching rules for layer {} ({} layer candidates, actor: {}, tenant: {})",
             filtered.len(),
             layer,
+            candidate_count,
             actor_id,
             tenant_id
         );
-        Ok(filtered)
+        Ok(RuleQueryResult {
+            rules: filtered,
+            candidate_count,
+            skipped,
+            invalid,
+        })
+    }
+
+    fn rule_policy_mode(payload: &Value) -> String {
+        payload
+            .get("policy_mode")
+            .and_then(|value| value.as_str())
+            .unwrap_or("Enforce")
+            .to_string()
+    }
+
+    fn rule_policy_type(payload: &Value) -> String {
+        payload
+            .get("policy_type")
+            .and_then(|value| value.as_str())
+            .unwrap_or("context_allow")
+            .to_string()
+    }
+
+    fn rule_policy_effect(rule: &Arc<dyn RuleInstance>) -> String {
+        match rule.policy_type() {
+            PolicyType::Forbidden | PolicyType::ContextDeny => "deny".to_string(),
+            PolicyType::ContextAllow => "allow".to_string(),
+            PolicyType::ContextDefer => "defer".to_string(),
+        }
+    }
+
+    fn build_connection_evaluation(
+        intent: &IntentEvent,
+        policy_connection: Option<&ConnectionMatchPayload>,
+        matched: bool,
+        policy_mode: String,
+        policy_type: String,
+        policy_effect: String,
+        reason: String,
+    ) -> String {
+        let fallback = ConnectionMatchPayload {
+            source_agent: String::new(),
+            source_layer: String::new(),
+            destination_agent: String::new(),
+            destination_layer: String::new(),
+        };
+        let connection = policy_connection.unwrap_or(&fallback);
+        serde_json::to_string(&ConnectionEvaluationPayload {
+            matched,
+            source_agent: connection.source_agent.clone(),
+            source_layer: connection.source_layer.clone(),
+            destination_agent: connection.destination_agent.clone(),
+            destination_layer: connection.destination_layer.clone(),
+            intent_source_agent: Self::normalize_edge_value(&intent.source_agent),
+            intent_source_layer: Self::normalize_edge_value(&intent.source_layer),
+            intent_destination_agent: Self::normalize_edge_value(&intent.destination_agent),
+            intent_destination_layer: Self::normalize_edge_value(&intent.destination_layer),
+            policy_mode,
+            policy_type,
+            policy_effect,
+            reason,
+        })
+        .unwrap_or_default()
+    }
+
+    fn rule_connection_check(
+        &self,
+        rule: &Arc<dyn RuleInstance>,
+        intent: &IntentEvent,
+    ) -> RuleConnectionCheck {
+        let payload = rule.management_plane_payload();
+        let policy_mode = Self::rule_policy_mode(&payload);
+        let policy_type = Self::rule_policy_type(&payload);
+        let policy_effect = Self::rule_policy_effect(rule);
+
+        let connection_match = match Self::parse_connection_match(&payload) {
+            Ok(value) => value,
+            Err(reason) => {
+                return RuleConnectionCheck {
+                    matched: false,
+                    invalid_policy_edge: true,
+                    connection_result_json: Self::build_connection_evaluation(
+                        intent,
+                        None,
+                        false,
+                        policy_mode,
+                        policy_type,
+                        policy_effect,
+                        reason.clone(),
+                    ),
+                    reason,
+                };
+            }
+        };
+
+        let source_agent = Self::normalize_edge_value(&intent.source_agent).unwrap_or_default();
+        let source_layer = Self::normalize_edge_value(&intent.source_layer).unwrap_or_default();
+        let destination_agent =
+            Self::normalize_edge_value(&intent.destination_agent).unwrap_or_default();
+        let destination_layer =
+            Self::normalize_edge_value(&intent.destination_layer).unwrap_or_default();
+
+        let matched = source_agent == connection_match.source_agent
+            && source_layer == connection_match.source_layer
+            && destination_agent == connection_match.destination_agent
+            && destination_layer == connection_match.destination_layer;
+
+        let reason = if matched {
+            format!(
+                "Intent edge matched policy connection {}:{} -> {}:{}.",
+                connection_match.source_agent,
+                connection_match.source_layer,
+                connection_match.destination_agent,
+                connection_match.destination_layer
+            )
+        } else {
+            format!(
+                "Intent edge {}:{} -> {}:{} did not match policy connection {}:{} -> {}:{}.",
+                source_agent,
+                source_layer,
+                destination_agent,
+                destination_layer,
+                connection_match.source_agent,
+                connection_match.source_layer,
+                connection_match.destination_agent,
+                connection_match.destination_layer
+            )
+        };
+
+        RuleConnectionCheck {
+            matched,
+            invalid_policy_edge: false,
+            connection_result_json: Self::build_connection_evaluation(
+                intent,
+                Some(&connection_match),
+                matched,
+                policy_mode,
+                policy_type,
+                policy_effect,
+                reason.clone(),
+            ),
+            reason,
+        }
     }
 
     fn extract_dry_run_rule_ids(context: Option<&Value>) -> Option<HashSet<String>> {
@@ -1096,6 +1604,13 @@ impl EnforcementEngine {
             || rule_vector.risk_count > 0
     }
 
+    fn payload_has_semantic_conditions(payload: &Value) -> bool {
+        match Self::parse_semantic_conditions(payload) {
+            Ok(conditions) => !conditions.is_empty(),
+            Err(_) => payload.get("semantic_conditions").is_some(),
+        }
+    }
+
     fn policy_similarity_score(
         cmp: &ComparisonResult,
         rule_vector: &RuleVector,
@@ -1137,69 +1652,93 @@ impl EnforcementEngine {
     }
 
     fn rule_requires_semantic(&self, rule: &Arc<dyn RuleInstance>) -> bool {
-        self.bridge
+        let rule_vector_requires_semantic = self
+            .bridge
             .get_rule_anchors(rule.rule_id())
             .map(|rule_vector| self.rule_vector_requires_semantic(&rule_vector))
-            .unwrap_or(false)
+            .unwrap_or(false);
+
+        rule_vector_requires_semantic
+            || Self::payload_has_semantic_conditions(&rule.management_plane_payload())
     }
 
-    fn parse_connection_match(payload: &Value) -> Option<ConnectionMatchPayload> {
-        payload
-            .get("connection_match")
-            .and_then(|value| value.as_str())
-            .and_then(|encoded| serde_json::from_str::<ConnectionMatchPayload>(encoded).ok())
+    fn parse_connection_match(payload: &Value) -> Result<ConnectionMatchPayload, String> {
+        let Some(value) = payload.get("connection_match") else {
+            return Err("Policy is missing required connection_match metadata.".to_string());
+        };
+
+        let connection = if let Some(encoded) = value.as_str() {
+            serde_json::from_str::<ConnectionMatchPayload>(encoded)
+                .map_err(|e| format!("Policy connection_match metadata is invalid JSON: {}", e))?
+        } else if value.is_object() {
+            serde_json::from_value::<ConnectionMatchPayload>(value.clone())
+                .map_err(|e| format!("Policy connection_match metadata is invalid: {}", e))?
+        } else {
+            return Err(
+                "Policy connection_match metadata must be a JSON object or encoded JSON string."
+                    .to_string(),
+            );
+        };
+
+        let missing = [
+            ("source_agent", connection.source_agent.trim()),
+            ("source_layer", connection.source_layer.trim()),
+            ("destination_agent", connection.destination_agent.trim()),
+            ("destination_layer", connection.destination_layer.trim()),
+        ]
+        .iter()
+        .filter_map(|(field, value)| if value.is_empty() { Some(*field) } else { None })
+        .collect::<Vec<_>>();
+
+        if !missing.is_empty() {
+            return Err(format!(
+                "Policy connection_match is missing required field(s): {}.",
+                missing.join(", ")
+            ));
+        }
+
+        Ok(ConnectionMatchPayload {
+            source_agent: connection.source_agent.trim().to_string(),
+            source_layer: connection.source_layer.trim().to_string(),
+            destination_agent: connection.destination_agent.trim().to_string(),
+            destination_layer: connection.destination_layer.trim().to_string(),
+        })
     }
 
     fn parse_deterministic_conditions(
         payload: &Value,
     ) -> Result<Vec<DeterministicConditionPayload>, String> {
-        let Some(encoded) = payload
-            .get("deterministic_conditions")
-            .and_then(|value| value.as_str())
-        else {
+        let Some(value) = payload.get("deterministic_conditions") else {
             return Ok(Vec::new());
         };
 
-        serde_json::from_str::<Vec<DeterministicConditionPayload>>(encoded)
-            .map_err(|e| format!("Invalid deterministic_conditions payload: {}", e))
+        if let Some(encoded) = value.as_str() {
+            serde_json::from_str::<Vec<DeterministicConditionPayload>>(encoded)
+                .map_err(|e| format!("Invalid deterministic_conditions payload: {}", e))
+        } else if value.is_array() {
+            serde_json::from_value::<Vec<DeterministicConditionPayload>>(value.clone())
+                .map_err(|e| format!("Invalid deterministic_conditions payload: {}", e))
+        } else {
+            Err(
+                "Invalid deterministic_conditions payload: expected JSON string or array"
+                    .to_string(),
+            )
+        }
     }
 
     fn parse_semantic_conditions(payload: &Value) -> Result<Vec<SemanticConditionPayload>, String> {
-        let Some(encoded) = payload
-            .get("semantic_conditions")
-            .and_then(|value| value.as_str())
-        else {
+        let Some(value) = payload.get("semantic_conditions") else {
             return Ok(Vec::new());
         };
 
-        serde_json::from_str::<Vec<SemanticConditionPayload>>(encoded)
-            .map_err(|e| format!("Invalid semantic_conditions payload: {}", e))
-    }
-
-    fn rule_matches_connection(&self, rule: &Arc<dyn RuleInstance>, intent: &IntentEvent) -> bool {
-        let payload = rule.management_plane_payload();
-        let Some(connection_match) = Self::parse_connection_match(&payload) else {
-            return true;
-        };
-
-        match (
-            intent.source_agent.as_deref(),
-            intent.source_layer.as_deref(),
-            intent.destination_agent.as_deref(),
-            intent.destination_layer.as_deref(),
-        ) {
-            (
-                Some(source_agent),
-                Some(source_layer),
-                Some(destination_agent),
-                Some(destination_layer),
-            ) => {
-                source_agent == connection_match.source_agent
-                    && source_layer == connection_match.source_layer
-                    && destination_agent == connection_match.destination_agent
-                    && destination_layer == connection_match.destination_layer
-            }
-            _ => false,
+        if let Some(encoded) = value.as_str() {
+            serde_json::from_str::<Vec<SemanticConditionPayload>>(encoded)
+                .map_err(|e| format!("Invalid semantic_conditions payload: {}", e))
+        } else if value.is_array() {
+            serde_json::from_value::<Vec<SemanticConditionPayload>>(value.clone())
+                .map_err(|e| format!("Invalid semantic_conditions payload: {}", e))
+        } else {
+            Err("Invalid semantic_conditions payload: expected JSON string or array".to_string())
         }
     }
 
@@ -1224,6 +1763,8 @@ impl EnforcementEngine {
                 "regex_pattern" => self.evaluate_regex_pattern(&condition, intent)?,
                 "payload_size" => self.evaluate_payload_size(&condition, intent),
                 "tool_name" => self.evaluate_tool_name(&condition, intent),
+                "rag_source" => self.evaluate_rag_source(&condition, intent),
+                "resource_identity" => self.evaluate_resource_identity(&condition, intent),
                 "request_rate" => self.evaluate_request_rate(&condition, intent),
                 "tool_parameter_validation" => {
                     self.evaluate_tool_parameter_validation(&condition, intent)
@@ -1277,8 +1818,17 @@ impl EnforcementEngine {
         &self,
         rule: &Arc<dyn RuleInstance>,
         intent_vector: &[f32; 128],
-        rule_vector: &RuleVector,
-    ) -> Result<(bool, String, [f32; 4], Vec<SemanticConditionResultPayload>), String> {
+        _rule_vector: &RuleVector,
+    ) -> Result<
+        (
+            bool,
+            String,
+            [f32; 4],
+            Vec<SemanticConditionResultPayload>,
+            bool,
+        ),
+        String,
+    > {
         let payload = rule.management_plane_payload();
         let conditions = Self::parse_semantic_conditions(&payload)?;
         if conditions.is_empty() {
@@ -1287,57 +1837,67 @@ impl EnforcementEngine {
                 "no semantic conditions".to_string(),
                 [0.0; 4],
                 Vec::new(),
+                false,
             ));
         }
 
-        let semantic_cmp = compare_intent_vs_rule(
-            intent_vector,
-            rule_vector,
-            [0.0, 0.0, 0.0, 0.0],
-            DecisionMode::MinMode,
-            [1.0, 1.0, 1.0, 1.0],
-        );
-
         let mut results = Vec::with_capacity(conditions.len());
+        let mut aggregate_similarities = [0.0f32; 4];
+        let mut any_guard_triggered = false;
         for condition in conditions {
-            let result = match condition.condition_type.as_str() {
-                "prompt_attack_semantic" => self
-                    .evaluate_prompt_attack_semantic(&condition, semantic_cmp.slice_similarities)?,
-                "tool_call_semantic" => self.evaluate_positive_semantic_condition(
-                    &condition,
-                    semantic_cmp.slice_similarities,
+            let (result, condition_similarities) = match condition.condition_type.as_str() {
+                "prompt_attack_semantic" | "tool_call_semantic" | "tool_response_semantic" => {
+                    Self::evaluate_semantic_condition_anchors(&condition, intent_vector)?
+                }
+                _ => (
+                    SemanticConditionResultPayload {
+                        condition_type: condition.condition_type.clone(),
+                        operator: condition.operator.clone(),
+                        passed: false,
+                        target_field: condition
+                            .parameters
+                            .get("target_field")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string()),
+                        actual_value: None,
+                        expected_value: Some(condition.parameters.clone()),
+                        details: format!(
+                            "Unsupported semantic condition type: {}",
+                            condition.condition_type
+                        ),
+                    },
+                    [0.0; 4],
                 ),
-                "tool_response_semantic" => self.evaluate_positive_semantic_condition(
-                    &condition,
-                    semantic_cmp.slice_similarities,
-                ),
-                _ => SemanticConditionResultPayload {
-                    condition_type: condition.condition_type.clone(),
-                    operator: condition.operator.clone(),
-                    passed: false,
-                    target_field: condition
-                        .parameters
-                        .get("target_field")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string()),
-                    actual_value: None,
-                    expected_value: Some(condition.parameters.clone()),
-                    details: format!(
-                        "Unsupported semantic condition type: {}",
-                        condition.condition_type
-                    ),
-                },
             };
 
+            for idx in 0..4 {
+                aggregate_similarities[idx] =
+                    aggregate_similarities[idx].max(condition_similarities[idx]);
+            }
+
             let passed = result.passed;
+            let role = Self::semantic_condition_role(&condition);
+            let guard_triggered = role == "guard" && !passed;
+            any_guard_triggered = any_guard_triggered || guard_triggered;
             results.push(result);
+
+            if guard_triggered {
+                return Ok((
+                    false,
+                    format!("semantic guard triggered: {}", condition.condition_type),
+                    aggregate_similarities,
+                    results,
+                    true,
+                ));
+            }
 
             if !passed {
                 return Ok((
                     false,
                     format!("semantic condition failed: {}", condition.condition_type),
-                    semantic_cmp.slice_similarities,
+                    aggregate_similarities,
                     results,
+                    any_guard_triggered,
                 ));
             }
         }
@@ -1345,8 +1905,9 @@ impl EnforcementEngine {
         Ok((
             true,
             "all semantic conditions passed".to_string(),
-            semantic_cmp.slice_similarities,
+            aggregate_similarities,
             results,
+            any_guard_triggered,
         ))
     }
 
@@ -1746,6 +2307,138 @@ impl EnforcementEngine {
         }
     }
 
+    fn evaluate_rag_source(
+        &self,
+        condition: &DeterministicConditionPayload,
+        intent: &IntentEvent,
+    ) -> DeterministicConditionResultPayload {
+        let Some(rag_source_id) = intent.rag_source_id.as_deref() else {
+            return DeterministicConditionResultPayload {
+                condition_type: condition.condition_type.clone(),
+                operator: condition.operator.clone(),
+                passed: false,
+                target_field: Some("rag_source_id".to_string()),
+                actual_value: None,
+                expected_value: Some(condition.parameters.clone()),
+                details: "No rag_source_id was provided".to_string(),
+            };
+        };
+        let Some(allowed_sources) = condition
+            .parameters
+            .get("allowed_rag_sources")
+            .and_then(|v| v.as_array())
+        else {
+            return DeterministicConditionResultPayload {
+                condition_type: condition.condition_type.clone(),
+                operator: condition.operator.clone(),
+                passed: false,
+                target_field: Some("rag_source_id".to_string()),
+                actual_value: Some(json!(rag_source_id)),
+                expected_value: None,
+                details: "No allowed_rag_sources were configured".to_string(),
+            };
+        };
+
+        let allowed = allowed_sources
+            .iter()
+            .filter_map(|value| value.as_str())
+            .any(|configured| configured == rag_source_id);
+
+        let passed = match condition.operator.as_str() {
+            "in" => allowed,
+            "not_in" => !allowed,
+            _ => false,
+        };
+
+        let details = if passed {
+            format!(
+                "rag_source_id='{}' satisfied RAG source allowlist constraint",
+                rag_source_id
+            )
+        } else {
+            format!(
+                "rag_source_id='{}' did not satisfy configured RAG source allowlist",
+                rag_source_id
+            )
+        };
+
+        DeterministicConditionResultPayload {
+            condition_type: condition.condition_type.clone(),
+            operator: condition.operator.clone(),
+            passed,
+            target_field: Some("rag_source_id".to_string()),
+            actual_value: Some(json!(rag_source_id)),
+            expected_value: Some(condition.parameters.clone()),
+            details,
+        }
+    }
+
+    fn evaluate_resource_identity(
+        &self,
+        condition: &DeterministicConditionPayload,
+        intent: &IntentEvent,
+    ) -> DeterministicConditionResultPayload {
+        let Some(identity_key) = intent.resource_identity_key.as_deref() else {
+            return DeterministicConditionResultPayload {
+                condition_type: condition.condition_type.clone(),
+                operator: condition.operator.clone(),
+                passed: false,
+                target_field: Some("resource_identity_key".to_string()),
+                actual_value: None,
+                expected_value: Some(condition.parameters.clone()),
+                details: "No resource_identity_key was provided".to_string(),
+            };
+        };
+        let Some(allowed_identities) = condition
+            .parameters
+            .get("allowed_identities")
+            .and_then(|v| v.as_array())
+        else {
+            return DeterministicConditionResultPayload {
+                condition_type: condition.condition_type.clone(),
+                operator: condition.operator.clone(),
+                passed: false,
+                target_field: Some("resource_identity_key".to_string()),
+                actual_value: Some(json!(identity_key)),
+                expected_value: None,
+                details: "No allowed_identities were configured".to_string(),
+            };
+        };
+
+        let allowed = allowed_identities
+            .iter()
+            .filter_map(|value| value.as_str())
+            .any(|configured| configured == identity_key);
+
+        let passed = match condition.operator.as_str() {
+            "in" => allowed,
+            "not_in" => !allowed,
+            _ => false,
+        };
+
+        let details = if passed {
+            format!(
+                "resource_identity_key='{}' satisfied resource identity allowlist constraint",
+                identity_key
+            )
+        } else {
+            format!(
+                "resource_identity_key='{}' did not satisfy configured resource identity allowlist",
+                identity_key
+            )
+        };
+
+        DeterministicConditionResultPayload {
+            condition_type: condition.condition_type.clone(),
+            operator: condition.operator.clone(),
+            passed,
+            target_field: Some("resource_identity_key".to_string()),
+            actual_value: Some(json!(identity_key)),
+            expected_value: Some(condition.parameters.clone()),
+            details,
+        }
+    }
+
     fn evaluate_request_rate(
         &self,
         condition: &DeterministicConditionPayload,
@@ -1958,110 +2651,296 @@ impl EnforcementEngine {
         }
     }
 
-    fn evaluate_prompt_attack_semantic(
-        &self,
-        condition: &SemanticConditionPayload,
-        slice_similarities: [f32; 4],
-    ) -> Result<SemanticConditionResultPayload, String> {
-        let similarity_threshold = condition
+    fn semantic_condition_role(condition: &SemanticConditionPayload) -> String {
+        if let Some(role) = condition
             .parameters
-            .get("similarity_threshold")
-            .and_then(|v| v.as_f64())
-            .map(|v| v as f32)
-            .unwrap_or(0.78);
-        let data_similarity = slice_similarities[2];
+            .get("condition_role")
+            .and_then(|v| v.as_str())
+            .map(|value| value.trim().to_lowercase())
+            .filter(|value| !value.is_empty())
+        {
+            if role == "guard" || role == "allow" {
+                return role;
+            }
+        }
 
-        let passed = match condition.operator.as_str() {
-            "not_similar_to_attack" => data_similarity < similarity_threshold,
-            _ => false,
-        };
-
-        let details = if passed {
-            format!(
-                "Prompt semantic similarity {:.3} stayed below attack threshold {:.3}",
-                data_similarity, similarity_threshold
-            )
-        } else {
-            format!(
-                "Prompt semantic similarity {:.3} reached or exceeded attack threshold {:.3}",
-                data_similarity, similarity_threshold
-            )
-        };
-
-        Ok(SemanticConditionResultPayload {
-            condition_type: condition.condition_type.clone(),
-            operator: condition.operator.clone(),
-            passed,
-            target_field: condition
-                .parameters
-                .get("target_field")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string()),
-            actual_value: Some(json!({
-                "data_similarity": data_similarity,
-                "slice_similarities": slice_similarities,
-            })),
-            expected_value: Some(json!({
-                "similarity_threshold": similarity_threshold,
-                "direction": "below_threshold_is_safe",
-                "categories": condition.parameters.get("categories").cloned().unwrap_or(json!([])),
-                "custom_anchors": condition.parameters.get("custom_anchors").cloned().unwrap_or(json!([])),
-            })),
-            details,
-        })
+        condition
+            .parameters
+            .get("evaluation_direction")
+            .and_then(|v| v.as_str())
+            .map(|value| value.trim().to_lowercase())
+            .filter(|value| !value.is_empty())
+            .map(|value| match value.as_str() {
+                "negative" => "guard".to_string(),
+                "positive" if condition.operator == "similar_to_attack" => "guard".to_string(),
+                "positive" if condition.condition_type == "prompt_attack_semantic" => {
+                    "guard".to_string()
+                }
+                "positive" => "allow".to_string(),
+                _ => value,
+            })
+            .unwrap_or_else(|| {
+                if condition.operator.starts_with("not_")
+                    || condition.operator == "absent"
+                    || condition.operator == "similar_to_attack"
+                    || condition.condition_type == "prompt_attack_semantic"
+                {
+                    "guard".to_string()
+                } else {
+                    "allow".to_string()
+                }
+            })
     }
 
-    fn evaluate_positive_semantic_condition(
-        &self,
+    fn semantic_condition_match_operator(condition: &SemanticConditionPayload) -> String {
+        condition
+            .parameters
+            .get("match_operator")
+            .and_then(|v| v.as_str())
+            .map(|value| value.trim().to_lowercase())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "similarity_gte".to_string())
+    }
+
+    fn semantic_target_slot_index(condition: &SemanticConditionPayload) -> Result<usize, String> {
+        let slot = condition
+            .parameters
+            .get("target_slot")
+            .and_then(|v| v.as_str())
+            .unwrap_or("data");
+
+        match slot {
+            "action" => Ok(0),
+            "resource" => Ok(1),
+            "data" => Ok(2),
+            "risk" => Ok(3),
+            _ => Err(format!(
+                "Semantic condition '{}' has invalid target_slot '{}'",
+                condition.condition_type, slot
+            )),
+        }
+    }
+
+    fn parse_semantic_anchor_vectors(
         condition: &SemanticConditionPayload,
-        slice_similarities: [f32; 4],
-    ) -> SemanticConditionResultPayload {
+    ) -> Result<Vec<[f32; 32]>, String> {
+        let Some(values) = condition
+            .parameters
+            .get("anchor_vectors")
+            .and_then(|value| value.as_array())
+        else {
+            return Err(format!(
+                "Semantic condition '{}' is missing required anchor_vectors",
+                condition.condition_type
+            ));
+        };
+
+        let anchor_count = condition
+            .parameters
+            .get("anchor_count")
+            .and_then(|value| value.as_u64())
+            .map(|value| value as usize)
+            .unwrap_or(values.len());
+
+        if anchor_count == 0 || values.is_empty() {
+            return Err(format!(
+                "Semantic condition '{}' has no configured anchor vectors",
+                condition.condition_type
+            ));
+        }
+        if values.len() < anchor_count {
+            return Err(format!(
+                "Semantic condition '{}' expected {} anchor vectors but only {} were provided",
+                condition.condition_type,
+                anchor_count,
+                values.len()
+            ));
+        }
+
+        let mut vectors = Vec::with_capacity(anchor_count.min(values.len()));
+        for (idx, value) in values.iter().take(anchor_count).enumerate() {
+            let Some(items) = value.as_array() else {
+                return Err(format!(
+                    "Semantic condition '{}' anchor vector {} is not an array",
+                    condition.condition_type, idx
+                ));
+            };
+            if items.len() != 32 {
+                return Err(format!(
+                    "Semantic condition '{}' anchor vector {} has length {}, expected 32",
+                    condition.condition_type,
+                    idx,
+                    items.len()
+                ));
+            }
+
+            let mut vector = [0.0f32; 32];
+            for (item_idx, item) in items.iter().enumerate() {
+                let Some(number) = item.as_f64() else {
+                    return Err(format!(
+                        "Semantic condition '{}' anchor vector {} item {} is not numeric",
+                        condition.condition_type, idx, item_idx
+                    ));
+                };
+                vector[item_idx] = number as f32;
+            }
+            vectors.push(vector);
+        }
+
+        Ok(vectors)
+    }
+
+    fn cosine_similarity_32(left: &[f32], right: &[f32; 32]) -> f32 {
+        let mut dot = 0.0f32;
+        let mut left_norm = 0.0f32;
+        let mut right_norm = 0.0f32;
+        for idx in 0..32 {
+            dot += left[idx] * right[idx];
+            left_norm += left[idx] * left[idx];
+            right_norm += right[idx] * right[idx];
+        }
+        if left_norm <= 1e-8 || right_norm <= 1e-8 {
+            0.0
+        } else {
+            dot / (left_norm.sqrt() * right_norm.sqrt())
+        }
+    }
+
+    fn max_semantic_anchor_similarity(
+        intent_vector: &[f32; 128],
+        slot_idx: usize,
+        anchors: &[[f32; 32]],
+    ) -> (f32, Option<usize>) {
+        let start = slot_idx * 32;
+        let slot = &intent_vector[start..start + 32];
+        let mut best_score = 0.0f32;
+        let mut best_idx = None;
+        for (idx, anchor) in anchors.iter().enumerate() {
+            let score = Self::cosine_similarity_32(slot, anchor);
+            if best_idx.is_none() || score > best_score {
+                best_score = score;
+                best_idx = Some(idx);
+            }
+        }
+        (best_score, best_idx)
+    }
+
+    fn evaluate_semantic_condition_anchors(
+        condition: &SemanticConditionPayload,
+        intent_vector: &[f32; 128],
+    ) -> Result<(SemanticConditionResultPayload, [f32; 4]), String> {
+        let condition_role = Self::semantic_condition_role(condition);
+        let match_operator = Self::semantic_condition_match_operator(condition);
+        let target_slot_idx = Self::semantic_target_slot_index(condition)?;
+        let target_slot = ["action", "resource", "data", "risk"][target_slot_idx];
         let similarity_threshold = condition
             .parameters
             .get("similarity_threshold")
             .and_then(|v| v.as_f64())
             .map(|v| v as f32)
-            .unwrap_or(0.72);
-        let data_similarity = slice_similarities[2];
+            .unwrap_or_else(|| {
+                if condition_role == "guard" {
+                    0.52
+                } else {
+                    0.72
+                }
+            });
 
-        let passed = match condition.operator.as_str() {
-            "similar_to_allowed" => data_similarity >= similarity_threshold,
+        let anchors = match Self::parse_semantic_anchor_vectors(condition) {
+            Ok(anchors) => anchors,
+            Err(details) => {
+                return Ok((
+                    SemanticConditionResultPayload {
+                        condition_type: condition.condition_type.clone(),
+                        operator: condition.operator.clone(),
+                        passed: false,
+                        target_field: condition
+                            .parameters
+                            .get("target_field")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string()),
+                        actual_value: None,
+                        expected_value: Some(json!({
+                            "condition_role": condition_role,
+                            "match_operator": match_operator,
+                            "target_slot": target_slot,
+                            "similarity_threshold": similarity_threshold,
+                            "requires": "anchor_vectors",
+                        })),
+                        details,
+                    },
+                    [0.0; 4],
+                ));
+            }
+        };
+
+        let (similarity, best_anchor_idx) =
+            Self::max_semantic_anchor_similarity(intent_vector, target_slot_idx, &anchors);
+        let threshold_matched = match match_operator.as_str() {
+            "similarity_gte" | "gte_threshold" => similarity >= similarity_threshold,
+            "similarity_lt" | "lt_threshold" => similarity < similarity_threshold,
             _ => false,
         };
+        let guard_triggered = condition_role == "guard" && threshold_matched;
+        let passed = match condition_role.as_str() {
+            "guard" => !guard_triggered,
+            "allow" => threshold_matched,
+            _ => false,
+        };
+        let mut similarities = [0.0f32; 4];
+        similarities[target_slot_idx] = similarity;
 
-        let details = if passed {
-            format!(
-                "Semantic similarity {:.3} met or exceeded allow threshold {:.3}",
-                data_similarity, similarity_threshold
-            )
-        } else {
-            format!(
-                "Semantic similarity {:.3} stayed below allow threshold {:.3}",
-                data_similarity, similarity_threshold
-            )
+        let details = match condition_role.as_str() {
+            "guard" if guard_triggered => format!(
+                "Semantic guard attack similarity {:.3} reached or exceeded threshold {:.3}",
+                similarity, similarity_threshold
+            ),
+            "guard" => format!(
+                "Semantic guard attack similarity {:.3} stayed below threshold {:.3}",
+                similarity, similarity_threshold
+            ),
+            "allow" if passed => format!(
+                "Semantic allow similarity {:.3} met or exceeded threshold {:.3}",
+                similarity, similarity_threshold
+            ),
+            "allow" => format!(
+                "Semantic allow similarity {:.3} stayed below threshold {:.3}",
+                similarity, similarity_threshold
+            ),
+            _ => format!("Unsupported semantic condition role '{}'", condition_role),
         };
 
-        SemanticConditionResultPayload {
-            condition_type: condition.condition_type.clone(),
-            operator: condition.operator.clone(),
-            passed,
-            target_field: condition
-                .parameters
-                .get("target_field")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string()),
-            actual_value: Some(json!({
-                "data_similarity": data_similarity,
-                "slice_similarities": slice_similarities,
-            })),
-            expected_value: Some(json!({
-                "similarity_threshold": similarity_threshold,
-                "direction": "above_threshold_is_allowed",
-                "categories": condition.parameters.get("categories").cloned().unwrap_or(json!([])),
-                "custom_anchors": condition.parameters.get("custom_anchors").cloned().unwrap_or(json!([])),
-            })),
-            details,
-        }
+        Ok((
+            SemanticConditionResultPayload {
+                condition_type: condition.condition_type.clone(),
+                operator: condition.operator.clone(),
+                passed,
+                target_field: condition
+                    .parameters
+                    .get("target_field")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+                actual_value: Some(json!({
+                    "similarity": similarity,
+                    "slice_similarities": similarities,
+                    "target_slot": target_slot,
+                    "best_anchor_index": best_anchor_idx,
+                    "threshold_matched": threshold_matched,
+                    "guard_triggered": guard_triggered,
+                })),
+                expected_value: Some(json!({
+                    "condition_role": condition_role,
+                    "match_operator": match_operator,
+                    "target_slot": target_slot,
+                    "similarity_threshold": similarity_threshold,
+                    "anchor_count": anchors.len(),
+                    "categories": condition.parameters.get("categories").cloned().unwrap_or(json!([])),
+                    "custom_anchors": condition.parameters.get("custom_anchors").cloned().unwrap_or(json!([])),
+                })),
+                details,
+            },
+            similarities,
+        ))
     }
 
     fn evaluate_record_count(
@@ -2384,6 +3263,248 @@ impl EnforcementEngine {
             "Rule '{}' has non-object management_plane_payload",
             rule.rule_id()
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api_types::{Actor, Data, Resource, Risk};
+
+    fn intent_with_edge(
+        source_agent: Option<&str>,
+        source_layer: Option<&str>,
+        destination_agent: Option<&str>,
+        destination_layer: Option<&str>,
+    ) -> IntentEvent {
+        IntentEvent {
+            id: "intent-1".to_string(),
+            schema_version: "v1.3".to_string(),
+            tenant_id: "tenant-1".to_string(),
+            timestamp: 0.0,
+            actor: Actor {
+                id: "agent-1".to_string(),
+                actor_type: "agent".to_string(),
+            },
+            action: "execute".to_string(),
+            source_agent: source_agent.map(str::to_string),
+            source_layer: source_layer.map(str::to_string),
+            destination_agent: destination_agent.map(str::to_string),
+            destination_layer: destination_layer.map(str::to_string),
+            llm_tool_intent: None,
+            tool_call_count: None,
+            resource: Resource {
+                resource_type: "llm".to_string(),
+                name: None,
+                location: None,
+            },
+            data: Data {
+                sensitivity: Vec::new(),
+                pii: None,
+                volume: None,
+                content: None,
+                size_bytes: None,
+                input_token_count: None,
+                record_count: None,
+            },
+            risk: Risk {
+                authn: "none".to_string(),
+                channel: None,
+            },
+            context: None,
+            layer: Some("llm".to_string()),
+            tool_name: None,
+            tool_method: None,
+            tool_params: None,
+            rag_source_id: None,
+            rag_source_name: None,
+            resource_identity_type: None,
+            resource_identity_key: None,
+            resource_identity_name: None,
+            rate_limit_context: None,
+        }
+    }
+
+    #[test]
+    fn parse_connection_match_requires_complete_policy_edge() {
+        let payload = json!({
+            "connection_match": {
+                "source_agent": "agent-1",
+                "source_layer": "input",
+                "destination_agent": "agent-1",
+                "destination_layer": ""
+            }
+        });
+
+        let err = EnforcementEngine::parse_connection_match(&payload).unwrap_err();
+        assert!(err.contains("destination_layer"));
+    }
+
+    #[test]
+    fn missing_intent_edge_evidence_names_missing_fields() {
+        let intent = intent_with_edge(Some("agent-1"), None, Some("agent-1"), Some("llm"));
+        let missing = EnforcementEngine::missing_intent_edge_fields(&intent);
+
+        assert_eq!(missing, vec!["source_layer"]);
+
+        let evidence = EnforcementEngine::connection_missing_evidence(&intent, &missing);
+        let connection_result: Value =
+            serde_json::from_str(&evidence.connection_result_json).unwrap();
+        let semantic_results: Value =
+            serde_json::from_str(&evidence.semantic_results_json).unwrap();
+
+        assert_eq!(evidence.decision, 0);
+        assert_eq!(evidence.evaluation_mode, "connection");
+        assert_eq!(connection_result["matched"], false);
+        assert!(connection_result["reason"]
+            .as_str()
+            .unwrap()
+            .contains("source_layer"));
+        assert_eq!(semantic_results[0]["missing_fields"][0], "source_layer");
+    }
+
+    fn semantic_condition(role: &str, anchors: Value) -> SemanticConditionPayload {
+        let operator = if role == "guard" {
+            "similar_to_attack"
+        } else {
+            "similar_to_allowed"
+        };
+        SemanticConditionPayload {
+            condition_type: "prompt_attack_semantic".to_string(),
+            operator: operator.to_string(),
+            parameters: json!({
+                "condition_role": role,
+                "evaluation_direction": "positive",
+                "match_operator": "similarity_gte",
+                "target_slot": "data",
+                "similarity_threshold": 0.8,
+                "anchor_vectors": anchors,
+                "anchor_count": 1,
+                "target_field": "payload_text",
+            }),
+        }
+    }
+
+    fn one_hot_vector(index: usize) -> Vec<f32> {
+        let mut vector = vec![0.0f32; 32];
+        vector[index] = 1.0;
+        vector
+    }
+
+    fn intent_vector_with_data_slot(data_slot: &[f32]) -> [f32; 128] {
+        let mut intent_vector = [0.0f32; 128];
+        intent_vector[64..96].copy_from_slice(data_slot);
+        intent_vector
+    }
+
+    #[test]
+    fn semantic_guard_fails_when_payload_matches_guard_anchor() {
+        let anchor = one_hot_vector(0);
+        let intent_vector = intent_vector_with_data_slot(&anchor);
+        let condition = semantic_condition("guard", json!([anchor]));
+
+        let (result, similarities) =
+            EnforcementEngine::evaluate_semantic_condition_anchors(&condition, &intent_vector)
+                .unwrap();
+
+        assert!(!result.passed);
+        assert_eq!(similarities[2], 1.0);
+        assert!(result.details.contains("reached or exceeded"));
+        assert_eq!(
+            result.actual_value.unwrap()["guard_triggered"],
+            Value::Bool(true)
+        );
+    }
+
+    #[test]
+    fn semantic_negative_direction_is_normalized_to_guard() {
+        let anchor = one_hot_vector(0);
+        let intent_vector = intent_vector_with_data_slot(&anchor);
+        let condition = SemanticConditionPayload {
+            condition_type: "prompt_attack_semantic".to_string(),
+            operator: "not_similar_to_attack".to_string(),
+            parameters: json!({
+                "evaluation_direction": "negative",
+                "target_slot": "data",
+                "similarity_threshold": 0.8,
+                "anchor_vectors": [anchor],
+                "anchor_count": 1,
+                "target_field": "payload_text",
+            }),
+        };
+
+        let (result, _) =
+            EnforcementEngine::evaluate_semantic_condition_anchors(&condition, &intent_vector)
+                .unwrap();
+
+        assert!(!result.passed);
+        assert_eq!(result.expected_value.unwrap()["condition_role"], "guard");
+        assert_eq!(result.actual_value.unwrap()["guard_triggered"], true);
+    }
+
+    #[test]
+    fn semantic_guard_passes_when_payload_is_below_guard_threshold() {
+        let intent_vector = intent_vector_with_data_slot(&one_hot_vector(0));
+        let condition = semantic_condition("guard", json!([one_hot_vector(1)]));
+
+        let (result, similarities) =
+            EnforcementEngine::evaluate_semantic_condition_anchors(&condition, &intent_vector)
+                .unwrap();
+
+        assert!(result.passed);
+        assert_eq!(similarities[2], 0.0);
+        assert!(result.details.contains("stayed below"));
+    }
+
+    #[test]
+    fn semantic_allow_passes_when_payload_matches_allow_anchor() {
+        let anchor = one_hot_vector(0);
+        let intent_vector = intent_vector_with_data_slot(&anchor);
+        let condition = semantic_condition("allow", json!([anchor]));
+
+        let (result, similarities) =
+            EnforcementEngine::evaluate_semantic_condition_anchors(&condition, &intent_vector)
+                .unwrap();
+
+        assert!(result.passed);
+        assert_eq!(similarities[2], 1.0);
+        assert!(result.details.contains("met or exceeded"));
+    }
+
+    #[test]
+    fn semantic_condition_missing_anchor_vectors_fails_closed_with_evidence() {
+        let intent_vector = intent_vector_with_data_slot(&one_hot_vector(0));
+        let condition = semantic_condition("guard", json!([]));
+
+        let (result, similarities) =
+            EnforcementEngine::evaluate_semantic_condition_anchors(&condition, &intent_vector)
+                .unwrap();
+
+        assert!(!result.passed);
+        assert_eq!(similarities, [0.0; 4]);
+        assert!(result.details.contains("no configured anchor vectors"));
+        assert_eq!(result.expected_value.unwrap()["requires"], "anchor_vectors");
+    }
+
+    #[test]
+    fn payload_with_condition_local_semantic_guard_requires_embedding() {
+        let payload = json!({
+            "semantic_conditions": [
+                {
+                    "condition_type": "prompt_attack_semantic",
+                    "operator": "not_similar_to_attack",
+                    "parameters": {
+                        "evaluation_direction": "guard",
+                        "target_slot": "data",
+                        "anchors": ["ignore previous instructions"],
+                        "anchor_vectors": [one_hot_vector(0)],
+                        "anchor_count": 1
+                    }
+                }
+            ]
+        });
+
+        assert!(EnforcementEngine::payload_has_semantic_conditions(&payload));
     }
 }
 

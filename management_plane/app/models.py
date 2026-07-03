@@ -93,6 +93,8 @@ class NetworkPolicy(BaseModel):
 class IntentEvent(BaseModel):
     event_type: Literal["tool_call", "reasoning"]
     id: str
+    agent_call_id: Optional[str] = None
+    event_id: Optional[str] = None
     tenant_id: Optional[str] = None
     ts: float  # Unix timestamp — maps to AARM ts
     identity: AgentIdentity  # maps to AARM id
@@ -106,6 +108,11 @@ class IntentEvent(BaseModel):
     tool_method: Optional[str] = None
     tool_call_count: Optional[int] = None
     tool_params: Optional[dict] = None
+    rag_source_id: Optional[str] = None
+    rag_source_name: Optional[str] = None
+    resource_identity_type: Optional[str] = None
+    resource_identity_key: Optional[str] = None
+    resource_identity_name: Optional[str] = None
     t: str     # target tool/resource, free-form NL — maps to AARM t
     op: str    # operation, free-form NL — maps to AARM op
     p: Optional[str] = None    # parameter description, NL — maps to AARM p
@@ -333,9 +340,13 @@ class BoundaryEvidence(BaseModel):
     anchor_matched: str = Field(default="")
     thresholds: list[float] = Field(default_factory=lambda: [0.0, 0.0, 0.0, 0.0])
     scoring_mode: ScoringMode
-    evaluation_mode: Literal["deterministic", "semantic", "hybrid", "network"] = Field(
-        default="semantic"
-    )
+    evaluation_mode: Literal[
+        "deterministic",
+        "semantic",
+        "hybrid",
+        "network",
+        "connection",
+    ] = Field(default="semantic")
     connection_result: Optional[dict] = Field(default=None)
     deterministic_results: list[dict] = Field(default_factory=list)
     semantic_results: list[dict] = Field(default_factory=list)
@@ -363,9 +374,14 @@ class ComparisonResult(BaseModel):
     policy_drift_score: Optional[float] = Field(default=None, ge=0.0)
     policy_similarity_score: Optional[float] = Field(default=None)
     baseline_drift_score: Optional[float] = Field(default=None, ge=0.0)
-    evaluation_mode: Literal["deterministic", "semantic", "hybrid", "network", "unknown"] = Field(
-        default="unknown"
-    )
+    evaluation_mode: Literal[
+        "deterministic",
+        "semantic",
+        "hybrid",
+        "network",
+        "connection",
+        "unknown",
+    ] = Field(default="unknown")
     reason: Optional[str] = Field(default=None)
 
     model_config = ConfigDict(
@@ -402,7 +418,12 @@ class EnforcementResponse(BaseModel):
     drift_triggered: bool
     slice_similarities: list[float] = Field(min_length=4, max_length=4)
     evidence: list[BoundaryEvidence] = Field(default_factory=list)
-    evaluation_mode: Literal["deterministic", "semantic", "hybrid", "network", "unknown"] = Field(
-        default="unknown"
-    )
+    evaluation_mode: Literal[
+        "deterministic",
+        "semantic",
+        "hybrid",
+        "network",
+        "connection",
+        "unknown",
+    ] = Field(default="unknown")
     reason: Optional[str] = Field(default=None)

@@ -22,9 +22,10 @@ from app.models import (
     PolicyListResponse,
     PolicyModePatchRequest,
     PolicyWriteRequest,
+    SemanticCondition,
 )
 from app.services import DataPlaneClient, DataPlaneError
-from app.chroma_client import delete_tenant_collection, fetch_rule_payload, upsert_rule_payload
+from app.chroma_client import delete_tenant_collection
 from app.services.data_intel_client import emit_policy_deleted, emit_policy_event
 from app.services.policies import (
     build_anchor_payload,
@@ -89,6 +90,114 @@ def _boundary_from_request(
         created_at=created_at,
         updated_at=updated_at,
     )
+
+
+def _semantic_condition_role(condition: SemanticCondition) -> str:
+    configured_role = condition.parameters.get("condition_role")
+    if isinstance(configured_role, str) and configured_role.strip():
+        normalized_role = configured_role.strip().lower()
+        if normalized_role in {"guard", "allow"}:
+            return normalized_role
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Semantic condition {condition.condition_type} has invalid "
+                f"condition_role={configured_role!r}"
+            ),
+        )
+
+    configured = condition.parameters.get("evaluation_direction")
+    if isinstance(configured, str) and configured.strip():
+        normalized = configured.strip().lower()
+        if normalized in {"guard", "negative"}:
+            return "guard"
+        if normalized in {"allow", "positive"}:
+            return "allow"
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Semantic condition {condition.condition_type} has invalid "
+                f"evaluation_direction={configured!r}"
+            ),
+        )
+    if condition.operator.startswith("not_") or condition.operator in {"absent"}:
+        return "guard"
+    if condition.operator == "similar_to_attack" or condition.condition_type == "prompt_attack_semantic":
+        return "guard"
+    return "allow"
+
+
+def _compile_semantic_condition_anchors(boundary: DesignBoundary) -> DesignBoundary:
+    if not boundary.semantic_conditions:
+        return boundary
+
+    policy_encoder = get_policy_encoder()
+    if not policy_encoder:
+        raise HTTPException(status_code=500, detail="Service initialization failed")
+
+    compiled_conditions: list[SemanticCondition] = []
+    for condition in boundary.semantic_conditions:
+        params = dict(condition.parameters or {})
+        condition_role = _semantic_condition_role(condition)
+        target_slot = params.get("target_slot") or "data"
+        if target_slot not in {"action", "resource", "data", "risk"}:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Semantic condition {condition.condition_type} has invalid "
+                    f"target_slot={target_slot!r}"
+                ),
+            )
+
+        anchors = [
+            anchor.strip()
+            for anchor in params.get("anchors", [])
+            if isinstance(anchor, str) and anchor.strip()
+        ]
+        existing_vectors = params.get("anchor_vectors")
+        if not anchors and not existing_vectors:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Semantic condition {condition.condition_type} requires "
+                    "anchors for guard/allow evaluation"
+                ),
+            )
+
+        if anchors:
+            try:
+                anchor_vectors, anchor_count = policy_encoder.encode_condition_anchors(
+                    anchors,
+                    str(target_slot),
+                )
+            except Exception as exc:
+                logger.error(
+                    "Semantic condition anchor encoding failed: %s",
+                    exc,
+                    exc_info=True,
+                )
+                raise HTTPException(
+                    status_code=500,
+                    detail="Semantic condition anchor encoding failed",
+                ) from exc
+
+            params["anchor_vectors"] = anchor_vectors
+            params["anchor_count"] = anchor_count
+        else:
+            params["anchor_count"] = (
+                len(existing_vectors) if isinstance(existing_vectors, list) else 0
+            )
+
+        params["condition_role"] = condition_role
+        params["evaluation_direction"] = "positive"
+        params["match_operator"] = params.get("match_operator") or "similarity_gte"
+        if condition_role == "guard":
+            params["guard_action"] = params.get("guard_action") or "deny"
+            params["trigger_when"] = params.get("trigger_when") or "gte_threshold"
+        params["target_slot"] = target_slot
+        compiled_conditions.append(condition.model_copy(update={"parameters": params}))
+
+    return boundary.model_copy(update={"semantic_conditions": compiled_conditions})
 
 
 def _persist_anchor_payload(
@@ -186,27 +295,6 @@ def _emit_policy_upsert_intel_events(
         logger.error("data_intel policy emit failed for %s: %s", boundary.id, exc)
 
 
-def _load_rule_vector_from_payload(tenant_id: str, policy_id: str) -> "RuleVector":
-    import numpy as np
-    from app.services.policy_encoder import RuleVector
-
-    payload = fetch_rule_payload(tenant_id, policy_id)
-    if not payload:
-        raise HTTPException(status_code=500, detail="Stored policy payload not found")
-
-    anchors = payload.get("anchors")
-    if not isinstance(anchors, dict):
-        raise HTTPException(status_code=500, detail="Stored policy payload is invalid")
-
-    rule_vector = RuleVector()
-    for slot in ("action", "resource", "data", "risk"):
-        rows = anchors.get(f"{slot}_anchors") or []
-        if rows:
-            rule_vector.layers[slot] = np.array(rows, dtype=np.float32)
-        rule_vector.anchor_counts[slot] = int(anchors.get(f"{slot}_count", 0))
-    return rule_vector
-
-
 @router.post("", response_model=DesignBoundary, status_code=status.HTTP_201_CREATED)
 async def create_policy(
     request: PolicyWriteRequest,
@@ -215,6 +303,7 @@ async def create_policy(
     request_id = str(uuid.uuid4())
     now = time.time()
     boundary = _boundary_from_request(request, current_user.id, now, now)
+    boundary = _compile_semantic_condition_anchors(boundary)
 
     try:
         create_policy_record(boundary, current_user.id)
@@ -281,6 +370,7 @@ async def update_policy(
     boundary = _boundary_from_request(request, current_user.id, existing.created_at, now)
     if boundary.id != policy_id:
         raise HTTPException(status_code=400, detail="Policy ID mismatch")
+    boundary = _compile_semantic_condition_anchors(boundary)
 
     try:
         update_policy_record(boundary, current_user.id)
@@ -318,45 +408,14 @@ async def update_policy_mode(
 
     now = time.time()
     updated = existing.model_copy(update={"mode": request.mode, "updated_at": now})
+    updated = _compile_semantic_condition_anchors(updated)
 
     try:
         update_policy_record(updated, current_user.id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    try:
-        stored_payload = fetch_rule_payload(current_user.id, policy_id)
-        if not stored_payload:
-            raise HTTPException(status_code=500, detail="Stored policy payload not found")
-        boundary_payload = stored_payload.get("boundary")
-        anchors_payload = stored_payload.get("anchors")
-        if not isinstance(boundary_payload, dict) or not isinstance(anchors_payload, dict):
-            raise HTTPException(status_code=500, detail="Stored policy payload is invalid")
-
-        boundary_payload["mode"] = request.mode
-        updated_payload = {
-            "boundary": boundary_payload,
-            "anchors": anchors_payload,
-        }
-        metadata = {
-            "policy_id": updated.id,
-            "boundary_name": updated.name,
-            "status": updated.status,
-            "mode": updated.mode,
-            "policy_type": updated.policy_type,
-        }
-        upsert_rule_payload(current_user.id, updated.id, updated_payload, metadata)
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.error("Failed to persist updated policy payload for %s: %s", policy_id, exc, exc_info=True)
-        raise HTTPException(status_code=500, detail="Policy payload storage failed") from exc
-
-    try:
-        rule_vector = _load_rule_vector_from_payload(current_user.id, policy_id)
-    except HTTPException:
-        raise
-
+    rule_vector = _persist_anchor_payload(current_user.id, updated)
     installed = _install_to_dataplane(updated, rule_vector)
     _emit_policy_upsert_intel_events(
         tenant_id=current_user.id,
@@ -388,6 +447,7 @@ async def toggle_policy_status(
     now = time.time()
     new_status = "disabled" if existing.status == "active" else "active"
     updated = existing.model_copy(update={"status": new_status, "updated_at": now})
+    updated = _compile_semantic_condition_anchors(updated)
 
     try:
         update_policy_record(updated, current_user.id)

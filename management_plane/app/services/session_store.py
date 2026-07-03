@@ -13,7 +13,7 @@ logger = get_logger(__name__, service_name="prism")
 
 def write_call(
     agent_id: str,
-    call_id: str,
+    event_id: str,
     action: str,
     prism_decision: str,
     enforced_decision: str,
@@ -24,7 +24,7 @@ def write_call(
             "/api/v1/prism-management/sessions/write-call",
             payload={
                 "agent_id": agent_id,
-                "call_id": call_id,
+                "event_id": event_id,
                 "action": action,
                 "prism_decision": prism_decision,
                 "enforced_decision": enforced_decision,
@@ -36,9 +36,9 @@ def write_call(
 
 
 def insert_call(
-    call_id: str,
+    event_id: str,
     agent_id: str,
-    session_id: str | None,
+    agent_call_id: str,
     ts_ms: int,
     prism_decision: str,
     enforced_decision: str,
@@ -53,9 +53,9 @@ def insert_call(
             "POST",
             "/api/v1/prism-management/calls",
             payload={
-                "call_id": call_id,
+                "event_id": event_id,
                 "agent_id": agent_id,
-                "session_id": session_id,
+                "agent_call_id": agent_call_id,
                 "ts_ms": ts_ms,
                 "prism_decision": prism_decision,
                 "enforced_decision": enforced_decision,
@@ -72,7 +72,7 @@ def insert_call(
 
 def update_call_decision(
     agent_id: str,
-    call_id: str,
+    event_id: str,
     prism_decision: str,
     enforced_decision: str,
 ) -> None:
@@ -81,7 +81,7 @@ def update_call_decision(
             "PATCH",
             f"/api/v1/prism-management/sessions/{agent_id}/call-decision",
             payload={
-                "call_id": call_id,
+                "event_id": event_id,
                 "prism_decision": prism_decision,
                 "enforced_decision": enforced_decision,
             },
@@ -94,11 +94,11 @@ def update_call_decision(
         )
 
 
-def update_call_enforced_decision(call_id: str, enforced_decision: str) -> None:
+def update_call_enforced_decision(event_id: str, enforced_decision: str) -> None:
     try:
         db_infra_client._request_json(
             "PATCH",
-            f"/api/v1/prism-management/calls/{call_id}/enforced-decision",
+            f"/api/v1/prism-management/calls/{event_id}/enforced-decision",
             payload={"enforced_decision": enforced_decision},
         )
     except Exception as exc:
@@ -225,7 +225,7 @@ def list_calls(
     limit: int = 50,
     offset: int = 0,
     agent_id: str | None = None,
-    session_id: str | None = None,
+    agent_call_id: str | None = None,
     decision: str | None = None,
     start_ms: int | None = None,
     end_ms: int | None = None,
@@ -235,8 +235,8 @@ def list_calls(
         params = {"limit": limit, "offset": offset}
         if agent_id is not None:
             params["agent_id"] = agent_id
-        if session_id is not None:
-            params["session_id"] = session_id
+        if agent_call_id is not None:
+            params["agent_call_id"] = agent_call_id
         if decision is not None:
             params["decision"] = decision
         if start_ms is not None:
@@ -256,11 +256,11 @@ def list_calls(
         return [], 0
 
 
-def get_call(call_id: str) -> dict | None:
+def get_call(event_id: str) -> dict | None:
     try:
         return db_infra_client._request_json(
             "GET",
-            f"/api/v1/prism-management/calls/{call_id}",
+            f"/api/v1/prism-management/calls/{event_id}",
             allow_not_found=True,
         ) or None
     except Exception as exc:

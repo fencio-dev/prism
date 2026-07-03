@@ -39,6 +39,7 @@ from app.services import session_store
 from app.services.data_intel_client import emit_enforcement_completed
 from app.services.db_infra_client import DbInfraClientError, db_infra_client
 from app.services.policies import list_policy_records
+from app.enforcement_identity import normalize_enforcement_identity
 
 logger = get_logger(__name__, service_name="prism")
 
@@ -56,6 +57,58 @@ def _allow_without_enforcement(reason: str) -> EnforcementResponse:
         slice_similarities=[1.0, 1.0, 1.0, 1.0],
         evidence=[],
         evaluation_mode="unknown",
+        reason=reason,
+    )
+
+
+def _deny_for_enforcement_error(
+    *,
+    reason: str,
+    baseline_drift_score: float | None,
+) -> EnforcementResponse:
+    evidence = BoundaryEvidence(
+        boundary_id="prism-enforcement-error",
+        boundary_name="Prism Enforcement Error",
+        effect="deny",
+        decision=0,
+        policy_mode="Enforce",
+        policy_type="enforcement_error",
+        similarities=[0.0, 0.0, 0.0, 0.0],
+        triggering_slice="semantic",
+        anchor_matched=reason,
+        thresholds=[0.0, 0.0, 0.0, 0.0],
+        scoring_mode="min",
+        evaluation_mode="semantic",
+        connection_result={
+            "matched": False,
+            "policy_effect": "deny",
+            "reason": reason,
+            "fail_closed": True,
+        },
+        deterministic_results=[],
+        semantic_results=[
+            {
+                "condition_type": "enforcement_error",
+                "operator": "fail_closed",
+                "passed": False,
+                "target_field": "data_plane",
+                "actual_value": None,
+                "expected_value": "successful enforcement evaluation",
+                "details": reason,
+            }
+        ],
+    )
+    baseline = baseline_drift_score if baseline_drift_score is not None else 0.0
+    return EnforcementResponse(
+        decision="DENY",
+        modified_params=None,
+        drift_score=baseline,
+        baseline_drift_score=baseline_drift_score,
+        drift_source="session_baseline" if baseline_drift_score is not None else "none",
+        drift_triggered=False,
+        slice_similarities=[0.0, 0.0, 0.0, 0.0],
+        evidence=[evidence],
+        evaluation_mode="semantic",
         reason=reason,
     )
 
@@ -257,7 +310,7 @@ def _persist_enforcement_record(
     enforcement_response: EnforcementResponse,
     decision_name: str,
     dry_run: bool,
-    session_id: str,
+    agent_call_id: str,
 ) -> None:
     """
     Persist enforcement output for telemetry and session history.
@@ -274,9 +327,9 @@ def _persist_enforcement_record(
 
     try:
         session_store.insert_call(
-            call_id=event.id,
+            event_id=event.id,
             agent_id=agent_id,
-            session_id=session_id,
+            agent_call_id=agent_call_id,
             ts_ms=int(event.ts * 1000),
             prism_decision=decision_name,
             enforced_decision=decision_name,
@@ -298,7 +351,7 @@ def _persist_enforcement_record(
             enforcement_response=enforcement_response,
             decision_name=decision_name,
             dry_run=dry_run,
-            session_id=session_id,
+            agent_call_id=agent_call_id,
         )
     except Exception as exc:
         logger.error("data_intel enforcement emit failed: %s", exc)
@@ -372,6 +425,32 @@ async def enforce_v2(
         x_prism_endpoint_fingerprint=x_prism_endpoint_fingerprint,
     )
 
+    identity = normalize_enforcement_identity(event, fallback_request_id=request_id)
+    logger.info(
+        "Assigned Prism enforcement identity: request_id=%s, agent_call_id=%s, event_id=%s, missing=%s",
+        request_id,
+        identity.agent_call_id,
+        identity.event_id,
+        ",".join(identity.missing_fields),
+    )
+
+    agent_call_id = identity.agent_call_id
+    if not identity.is_valid:
+        reason = "Missing required enforcement identity: " + ", ".join(identity.missing_fields)
+        enforcement_response = _deny_for_enforcement_error(
+            reason=reason,
+            baseline_drift_score=None,
+        )
+        _persist_enforcement_record(
+            agent_id=agent_id,
+            event=event,
+            enforcement_response=enforcement_response,
+            decision_name="DENY",
+            dry_run=dry_run,
+            agent_call_id=agent_call_id,
+        )
+        return enforcement_response
+
     if agent_id:
         try:
             integration = db_infra_client.get_prism_agent_integration(agent_id)
@@ -416,7 +495,6 @@ async def enforce_v2(
         ),
     )
 
-    session_id = event.identity.principal_id or agent_id or event.id
     action = event.op or ""
 
     try:
@@ -497,7 +575,7 @@ async def enforce_v2(
                         enforcement_response=enforcement_response,
                         decision_name="DENY",
                         dry_run=dry_run,
-                        session_id=session_id,
+                        agent_call_id=agent_call_id,
                     )
                     return enforcement_response
 
@@ -566,19 +644,30 @@ async def enforce_v2(
                 client.enforce,
                 event,
                 current_vector,
-                request_id,
+                event.event_id or event.id,
                 baseline_drift_score,
-                enforce_namespace,
+                agent_call_id,
             )
         except Exception as e:
             logger.error(f"Data Plane enforcement failed: {e}", exc_info=True)
-
-            if isinstance(e, DataPlaneError):
-                raise HTTPException(
-                    status_code=502,
-                    detail=f"Data Plane error: {e}",
-                ) from e
-            raise HTTPException(status_code=500, detail="Enforcement failed") from e
+            reason = (
+                f"Data Plane error: {e}"
+                if isinstance(e, DataPlaneError)
+                else f"Enforcement failed: {e}"
+            )
+            enforcement_response = _deny_for_enforcement_error(
+                reason=reason,
+                baseline_drift_score=baseline_drift_score,
+            )
+            _persist_enforcement_record(
+                agent_id=agent_id,
+                event=event,
+                enforcement_response=enforcement_response,
+                decision_name="DENY",
+                dry_run=dry_run,
+                agent_call_id=agent_call_id,
+            )
+            return enforcement_response
 
         # Step 8: Derive decision_name
         if result.decision_name:
@@ -611,7 +700,7 @@ async def enforce_v2(
             enforcement_response=enforcement_response,
             decision_name=decision_name,
             dry_run=dry_run,
-            session_id=session_id,
+            agent_call_id=agent_call_id,
         )
 
         return enforcement_response

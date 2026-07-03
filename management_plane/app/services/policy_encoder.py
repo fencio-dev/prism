@@ -221,6 +221,21 @@ class PolicyEncoder(SemanticEncoder):
 
         return anchor_array, len(anchor_texts)
 
+    def encode_condition_anchors(
+        self,
+        anchor_texts: list[str],
+        layer_name: str,
+    ) -> tuple[list[list[float]], int]:
+        """
+        Encode semantic condition anchors for condition-local evaluation.
+
+        Unlike the rule vector payload, condition-local anchors are returned
+        without padding so the data plane evaluates only configured guards or
+        allow anchors.
+        """
+        anchor_array, count = self._encode_anchors(anchor_texts, layer_name)
+        return anchor_array[:count].tolist(), count
+
     def encode(self, boundary: DesignBoundary) -> RuleVector:
         """
         Encode canonical DesignBoundary to RuleVector.

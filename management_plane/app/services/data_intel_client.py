@@ -156,7 +156,7 @@ def emit_enforcement_completed(
     enforcement_response: EnforcementResponse,
     decision_name: str,
     dry_run: bool,
-    session_id: str,
+    agent_call_id: str,
 ) -> None:
     tenant_id = event.tenant_id or ""
     resolved_agent_id = agent_id or event.identity.agent_id or ""
@@ -168,8 +168,8 @@ def emit_enforcement_completed(
         "prism.dry_run.completed" if dry_run else "prism.enforcement.completed"
     )
     payload = {
-        "call_id": event.id,
-        "session_id": session_id,
+        "event_id": event.event_id or event.id,
+        "agent_call_id": agent_call_id,
         "tenant_id": tenant_id,
         "agent_id": resolved_agent_id,
         "decision": decision_name,
@@ -198,8 +198,8 @@ def emit_enforcement_completed(
         event_type=event_type,
         tenant_id=tenant_id,
         agent_id=resolved_agent_id,
-        aggregate_type="dry_run" if dry_run else "enforcement_call",
-        aggregate_id=event.id,
+        aggregate_type="dry_run" if dry_run else "enforcement_event",
+        aggregate_id=event.event_id or event.id,
         payload=payload,
         occurred_at_ms=int(event.ts * 1000),
     )
